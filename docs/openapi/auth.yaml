@@ -1,391 +1,198 @@
 openapi: 3.0.3
 info:
-  title: TrustCheck API — AUTH
+  title: TrustCheck API - AUTH
   description: |
-    Contrato oficial do módulo AUTH para consumo por Mobile e Admin-Web.
-    Sprint 1 — janela: 27 abr a 3 mai 2026.
-    Telas cobertas: M02, M03, M04, E01, E02, E03, W01.
-  version: "1.0.0"
-  contact:
-    name: TrustCheck Engineering
-
+    Contrato do modulo AUTH alinhado aos endpoints implementados na Sprint 01.
+    Escopo: cadastro consumidor/empresa, confirmacao OTP, SSO e claim empresarial.
+  version: "1.1.0"
 servers:
   - url: http://localhost:3000
-    description: Desenvolvimento local
   - url: https://api.trustcheck.com.br
-    description: Produção
 
 tags:
-  - name: auth-consumidor
-    description: Fluxo de cadastro e login de consumidores
-  - name: auth-empresa
-    description: Fluxo de cadastro e login de empresas
-  - name: auth-admin
-    description: Login do backoffice administrativo
-  - name: auth-2fa
-    description: Autenticação de dois fatores (obrigatório para empresa e admin)
-  - name: auth-otp
-    description: Fluxo OTP por e-mail
+  - name: auth-consumer
+  - name: auth-company
   - name: auth-sso
-    description: SSO via Google e Apple
-  - name: auth-senha
-    description: Recuperação e redefinição de senha
 
 paths:
-  /auth/consumidor/cadastro:
+  /auth/consumer/register:
     post:
-      tags: [auth-consumidor]
-      summary: Cadastro de consumidor (M03)
+      tags: [auth-consumer]
+      summary: Inicia cadastro de consumidor
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CadastroConsumidorRequest'
+              $ref: '#/components/schemas/RegisterConsumerRequest'
       responses:
         "201":
-          description: Cadastro realizado — OTP enviado para o e-mail
+          description: Usuario criado em pending_otp com registrationToken
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MensagemResponse'
+                $ref: '#/components/schemas/RegisterInitResponse'
         "409":
           $ref: '#/components/responses/Conflict'
         "422":
           $ref: '#/components/responses/UnprocessableEntity'
 
-  /auth/empresa/cadastro:
+  /auth/consumer/register/confirm:
     post:
-      tags: [auth-empresa]
-      summary: Cadastro de empresa (E01)
+      tags: [auth-consumer]
+      summary: Confirma cadastro do consumidor com OTP
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CadastroEmpresaRequest'
+              $ref: '#/components/schemas/RegisterConfirmRequest'
+      responses:
+        "200":
+          description: Conta ativada e tokens emitidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokensResponse'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/company/register:
+    post:
+      tags: [auth-company]
+      summary: Inicia cadastro empresarial
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterCompanyRequest'
       responses:
         "201":
-          description: Cadastro empresarial realizado — OTP enviado para o e-mail
+          description: Usuario/empresa criados e OTP enviado
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MensagemResponse'
+                $ref: '#/components/schemas/RegisterInitResponse'
         "409":
           $ref: '#/components/responses/Conflict'
-
-  /auth/login:
-    post:
-      tags: [auth-consumidor, auth-empresa, auth-admin]
-      summary: Login com e-mail + senha (M04, E03, W01)
-      description: |
-        Após 5 tentativas incorretas consecutivas a conta é bloqueada por 30 minutos (HU-AUTH-11).
-        Empresa e admin com 2FA ativo recebem `requer2fa: true` e `tokenTemporario` para prosseguir.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/LoginRequest'
-      responses:
-        "200":
-          description: Login bem-sucedido ou requer 2FA
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - $ref: '#/components/schemas/TokensResponse'
-                  - $ref: '#/components/schemas/Requer2FAResponse'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-        "429":
-          $ref: '#/components/responses/TooManyRequests'
-
-  /auth/otp/solicitar:
-    post:
-      tags: [auth-otp]
-      summary: Solicitar código OTP por e-mail
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SolicitarOtpRequest'
-      responses:
-        "200":
-          description: Resposta genérica (não expõe existência da conta)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MensagemResponse'
-
-  /auth/otp/validar:
-    post:
-      tags: [auth-otp]
-      summary: Validar OTP e obter tokens (M03)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ValidarOtpRequest'
-      responses:
-        "200":
-          description: OTP válido — tokens emitidos
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TokensResponse'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-
-  /auth/senha/recuperar:
-    post:
-      tags: [auth-senha]
-      summary: Solicitar redefinição de senha via OTP (M04 — HU-AUTH-04)
-      description: |
-        Envia código OTP de redefinição ao e-mail informado com validade de 15 minutos.
-        Resposta sempre genérica — não expõe se o e-mail está ou não cadastrado.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SolicitarOtpRequest'
-      responses:
-        "200":
-          description: Resposta genérica (não expõe existência da conta)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MensagemResponse'
-        "429":
-          $ref: '#/components/responses/TooManyRequests'
-
-  /auth/senha/redefinir:
-    post:
-      tags: [auth-senha]
-      summary: Redefinir senha com código OTP (M04 — HU-AUTH-04)
-      description: |
-        Valida o código OTP recebido por e-mail e substitui a senha.
-        Todos os refresh tokens existentes são revogados após a redefinição.
-        O 2FA permanece ativo — não é desativado neste fluxo.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RedefinirSenhaRequest'
-      responses:
-        "200":
-          description: Senha redefinida — novos tokens emitidos
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TokensResponse'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
         "422":
           $ref: '#/components/responses/UnprocessableEntity'
 
-  /auth/google:
-    get:
-      tags: [auth-sso]
-      summary: Iniciar fluxo SSO Google (M03)
-      responses:
-        "302":
-          description: Redirecionamento para Google OAuth
-
-  /auth/google/callback:
-    get:
-      tags: [auth-sso]
-      summary: Callback SSO Google
-      responses:
-        "200":
-          description: Login via Google bem-sucedido
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TokensResponse'
-
-  /auth/apple:
-    get:
-      tags: [auth-sso]
-      summary: Iniciar fluxo SSO Apple (M03, M04 — HU-AUTH-06)
-      responses:
-        "302":
-          description: Redirecionamento para Apple OAuth
-
-  /auth/apple/callback:
+  /auth/company/register/confirm:
     post:
-      tags: [auth-sso]
-      summary: Callback SSO Apple
-      description: |
-        Aceita POST conforme especificação Apple Sign In.
-        Suporta e-mails relay (`privaterelay.appleid.com`).
-      requestBody:
-        required: true
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              type: object
-              properties:
-                code:
-                  type: string
-                id_token:
-                  type: string
-                user:
-                  type: string
-                  description: JSON string com name e email (apenas no primeiro login)
-      responses:
-        "200":
-          description: Login via Apple bem-sucedido
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TokensResponse'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-
-  /auth/2fa/ativar:
-    post:
-      tags: [auth-2fa]
-      summary: Ativar 2FA — gera QR Code TOTP (E03, W01)
-      security:
-        - bearerAuth: []
-      responses:
-        "201":
-          description: QR Code gerado para configuração no autenticador
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Ativar2FAResponse'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-
-  /auth/2fa/confirmar:
-    post:
-      tags: [auth-2fa]
-      summary: Confirmar código 2FA e obter tokens
-      security:
-        - bearerAuth: []
+      tags: [auth-company]
+      summary: Confirma OTP e inicia enrolamento TOTP da empresa
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Validar2FARequest'
+              $ref: '#/components/schemas/RegisterConfirmRequest'
       responses:
         "200":
-          description: 2FA validado — tokens emitidos
+          description: Token temporario + segredo/QR/recovery codes
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TokensResponse'
+                $ref: '#/components/schemas/CompanyConfirmResponse'
+        "400":
+          $ref: '#/components/responses/BadRequest'
         "401":
           $ref: '#/components/responses/Unauthorized'
 
-  /auth/empresa/reivindicar:
+  /auth/company/claim:
     post:
-      tags: [auth-empresa]
-      summary: Reivindicar perfil empresarial por CNPJ (E02)
-      security:
-        - bearerAuth: []
+      tags: [auth-company]
+      summary: Reivindica perfil empresarial por CNPJ
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ReivindicarEmpresaRequest'
+              $ref: '#/components/schemas/ClaimCompanyRequest'
       responses:
-        "201":
-          description: Solicitação registrada para análise administrativa
+        "202":
+          description: Claim registrado para analise
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MensagemResponse'
+                $ref: '#/components/schemas/ClaimCreatedResponse'
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
 
-  /auth/token/renovar:
-    post:
-      tags: [auth-consumidor, auth-empresa, auth-admin]
-      summary: Renovar access token via refresh token
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RefreshTokenRequest'
-      responses:
-        "200":
-          description: Novos tokens emitidos
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TokensResponse'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-
-  /auth/conta/status:
+  /auth/company/claim/{claimId}/status:
     get:
-      tags: [auth-consumidor, auth-empresa, auth-admin]
-      summary: Consultar status da conta (bloqueio por tentativas — HU-AUTH-11)
-      description: |
-        Retorna se a conta está ativa, bloqueada temporariamente ou banida.
-        Pode ser consultado sem autenticação usando o e-mail como parâmetro.
+      tags: [auth-company]
+      summary: Consulta status do claim (requer autenticacao)
       parameters:
-        - in: query
-          name: email
+        - in: path
+          name: claimId
           required: true
           schema:
             type: string
-            format: email
+            format: uuid
+      security:
+        - bearerAuth: []
       responses:
         "200":
-          description: Status da conta
+          description: Status atual do claim
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/StatusContaResponse'
+                $ref: '#/components/schemas/ClaimStatusResponse'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
 
-  /auth/conta/excluir:
+  /auth/sso/google:
     post:
-      tags: [auth-consumidor, auth-empresa]
-      summary: Solicitar exclusão de dados pessoais — LGPD (HU-AUTH-12)
-      description: |
-        Registra solicitação de apagamento de dados pessoais conforme LGPD art. 18.
-        Requer confirmação com senha. Prazo de processamento: até 15 dias úteis.
-        Casos ativos em andamento são notificados antes da exclusão efetiva.
-      security:
-        - bearerAuth: []
+      tags: [auth-sso]
+      summary: Login/cadastro via token Google
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ExcluirContaRequest'
+              $ref: '#/components/schemas/SsoAuthRequest'
       responses:
         "200":
-          description: Solicitação de exclusão registrada
+          description: Tokens emitidos
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MensagemResponse'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
+                $ref: '#/components/schemas/TokensResponse'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
 
-  /auth/logout:
+  /auth/sso/apple:
     post:
-      tags: [auth-consumidor, auth-empresa, auth-admin]
-      summary: Encerrar sessão e revogar tokens
-      security:
-        - bearerAuth: []
+      tags: [auth-sso]
+      summary: Login/cadastro via token Apple
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SsoAuthRequest'
       responses:
         "200":
-          description: Sessão encerrada
+          description: Tokens emitidos
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MensagemResponse'
+                $ref: '#/components/schemas/TokensResponse'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
 
 components:
   securitySchemes:
@@ -395,232 +202,148 @@ components:
       bearerFormat: JWT
 
   responses:
+    BadRequest:
+      description: Requisicao invalida
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     Unauthorized:
-      description: Não autorizado
+      description: Nao autorizado
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErroResponse'
+            $ref: '#/components/schemas/ErrorResponse'
     Conflict:
-      description: Recurso já existente
+      description: Conflito de regra de negocio
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErroResponse'
+            $ref: '#/components/schemas/ErrorResponse'
     UnprocessableEntity:
-      description: Dados inválidos
+      description: Validacao semantica invalida
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErroResponse'
-    TooManyRequests:
-      description: Conta bloqueada temporariamente por excesso de tentativas
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Recurso nao encontrado
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/BloqueioResponse'
+            $ref: '#/components/schemas/ErrorResponse'
 
   schemas:
-    CadastroConsumidorRequest:
+    RegisterConsumerRequest:
       type: object
-      required: [email, senha, nome]
+      required: [email, password, fullName, lgpdAccepted, lgpdVersion]
       properties:
-        email:
-          type: string
-          format: email
-          example: joao@email.com
-        senha:
-          type: string
-          minLength: 8
-          example: MinhaSenh@123
-        nome:
-          type: string
-          example: João da Silva
-        telefone:
-          type: string
-          example: "+5511999990000"
+        email: { type: string, format: email }
+        password: { type: string, minLength: 10 }
+        fullName: { type: string }
+        phone: { type: string }
+        lgpdAccepted: { type: boolean }
+        lgpdVersion: { type: string }
 
-    CadastroEmpresaRequest:
+    RegisterCompanyRequest:
       type: object
-      required: [email, senha, nome, cnpj, razaoSocial]
+      required: [email, password, cnpj, legalName, fullName, lgpdAccepted, lgpdVersion]
       properties:
-        email:
-          type: string
-          format: email
-        senha:
-          type: string
-          minLength: 8
-        nome:
-          type: string
-        cnpj:
-          type: string
-          pattern: '^\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}$'
-          description: CNPJ com ou sem formatação — dígitos verificadores validados pela API
-          example: "12.345.678/0001-99"
-        razaoSocial:
-          type: string
-        nomeFantasia:
-          type: string
+        email: { type: string, format: email }
+        password: { type: string, minLength: 10 }
+        cnpj: { type: string }
+        legalName: { type: string }
+        tradeName: { type: string }
+        fullName: { type: string }
+        phone: { type: string }
+        lgpdAccepted: { type: boolean }
+        lgpdVersion: { type: string }
 
-    LoginRequest:
+    RegisterConfirmRequest:
       type: object
-      required: [email, senha]
+      required: [registrationToken, otp]
       properties:
-        email:
+        registrationToken: { type: string }
+        otp:
           type: string
-          format: email
-        senha:
-          type: string
+          pattern: '^\\d{6}$'
 
-    SolicitarOtpRequest:
+    ClaimCompanyRequest:
       type: object
-      required: [email]
+      required: [cnpj, legalName, email, password, fullName, documents, lgpdAccepted, lgpdVersion]
       properties:
-        email:
-          type: string
-          format: email
+        cnpj: { type: string }
+        legalName: { type: string }
+        tradeName: { type: string }
+        email: { type: string, format: email }
+        password: { type: string, minLength: 10 }
+        fullName: { type: string }
+        phone: { type: string }
+        documents:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/ClaimDocument'
+        lgpdAccepted: { type: boolean }
+        lgpdVersion: { type: string }
 
-    ValidarOtpRequest:
+    ClaimDocument:
       type: object
-      required: [email, codigo]
+      required: [url, fileName, mimeType, sizeBytes]
       properties:
-        email:
-          type: string
-          format: email
-        codigo:
-          type: string
-          example: "123456"
+        url: { type: string, format: uri }
+        fileName: { type: string }
+        mimeType: { type: string }
+        sizeBytes: { type: integer, minimum: 1 }
 
-    Validar2FARequest:
+    SsoAuthRequest:
       type: object
-      required: [codigo]
+      required: [idToken, lgpdAccepted, lgpdVersion]
       properties:
-        codigo:
-          type: string
-          example: "654321"
+        idToken: { type: string }
+        lgpdAccepted: { type: boolean }
+        lgpdVersion: { type: string }
 
-    ReivindicarEmpresaRequest:
+    RegisterInitResponse:
       type: object
-      required: [cnpj, justificativa]
       properties:
-        cnpj:
-          type: string
-          pattern: '^\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}$'
-        justificativa:
-          type: string
+        userId: { type: string, format: uuid }
+        registrationToken: { type: string }
 
-    RefreshTokenRequest:
+    ClaimCreatedResponse:
       type: object
-      required: [refreshToken]
       properties:
-        refreshToken:
-          type: string
+        claimId: { type: string, format: uuid }
+        registrationToken: { type: string }
+
+    ClaimStatusResponse:
+      type: object
+      properties:
+        claimId: { type: string, format: uuid }
+        status: { type: string, enum: [pending_review, approved, rejected] }
+        submittedAt: { type: string, format: date-time }
+        reviewedAt: { type: string, format: date-time, nullable: true }
+        rejectionReason: { type: string, nullable: true }
 
     TokensResponse:
       type: object
       properties:
-        accessToken:
-          type: string
-        refreshToken:
-          type: string
-        perfil:
-          type: string
-          enum: [CONSUMIDOR, EMPRESA, ADMIN]
-        usuario:
-          type: object
-          properties:
-            id:
-              type: string
-              format: uuid
-            nome:
-              type: string
-            email:
-              type: string
+        accessToken: { type: string }
+        refreshToken: { type: string }
 
-    Requer2FAResponse:
+    CompanyConfirmResponse:
       type: object
       properties:
-        requer2fa:
-          type: boolean
-          example: true
-        mensagem:
-          type: string
-        tokenTemporario:
-          type: string
+        accessToken: { type: string, description: token temporario totp_pending }
+        totpSecret: { type: string }
+        qrCodeDataUrl: { type: string }
+        recoveryCodes:
+          type: array
+          items: { type: string }
 
-    Ativar2FAResponse:
+    ErrorResponse:
       type: object
       properties:
-        qrCodeUrl:
-          type: string
-          description: Data URL da imagem QR Code para o autenticador TOTP
-        segredo:
-          type: string
-          description: Segredo TOTP em texto (exibir apenas uma vez)
-
-    MensagemResponse:
-      type: object
-      properties:
-        mensagem:
-          type: string
-
-    RedefinirSenhaRequest:
-      type: object
-      required: [email, codigo, novaSenha]
-      properties:
-        email:
-          type: string
-          format: email
-        codigo:
-          type: string
-          description: Código OTP de 6 dígitos recebido por e-mail
-          example: "123456"
-        novaSenha:
-          type: string
-          minLength: 8
-          example: NovaSenha@456
-
-    ExcluirContaRequest:
-      type: object
-      required: [senha]
-      properties:
-        senha:
-          type: string
-          description: Senha atual para confirmar a identidade antes da exclusão
-
-    StatusContaResponse:
-      type: object
-      properties:
-        status:
-          type: string
-          enum: [ATIVA, BLOQUEADA_TEMPORARIAMENTE, BANIDA]
-        bloqueadaAte:
-          type: string
-          format: date-time
-          nullable: true
-          description: Presente apenas quando status = BLOQUEADA_TEMPORARIAMENTE
-        mensagem:
-          type: string
-
-    BloqueioResponse:
-      type: object
-      properties:
-        statusCode:
-          type: integer
-          example: 429
-        mensagem:
-          type: string
-          example: Conta bloqueada por excesso de tentativas. Tente novamente em 28 minutos.
-        bloqueadaAte:
-          type: string
-          format: date-time
-
-    ErroResponse:
-      type: object
-      properties:
-        statusCode:
-          type: integer
-        message:
-          type: string
-        error:
-          type: string
+        statusCode: { type: integer }
+        message: {}
+        error: { type: string }
