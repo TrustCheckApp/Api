@@ -16,6 +16,7 @@ import { Request } from 'express';
 import { CompanyAuthService } from './company-auth.service';
 import { RegisterCompanyDto, ClaimCompanyDto } from './dto/company-auth.dto';
 import { RegisterConfirmDto } from '../dto/register-consumer.dto';
+import { JwtGuard } from '../../../auth/guards/auth.guard';
 
 @ApiTags('auth-empresa')
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
@@ -66,6 +67,7 @@ export class CompanyAuthController {
 
   @Get('claim/:claimId/status')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtGuard)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Consultar status da reivindicação (requerente autenticado)' })
   @ApiResponse({ status: 200, description: 'Status do claim retornado' })
