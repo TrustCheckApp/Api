@@ -1,0 +1,569 @@
+// Schema Prisma — TrustCheck V1
+// Sprint 1: AUTH e CASOS — fundação funcional LGPD/CDC auditável
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────
+
+enum Perfil {
+  CONSUMIDOR
+  EMPRESA
+  ADMIN
+}
+
+enum StatusCaso {
+  ENVIADO
+  EM_MODERACAO
+  PUBLICADO
+  AGUARDANDO_RESPOSTA_EMPRESA
+  EM_NEGOCIACAO
+  RESOLVIDO
+  NAO_RESOLVIDO
+}
+
+enum TipoAuditoria {
+  AUTH_LOGIN
+  AUTH_LOGOUT
+  AUTH_OTP_ENVIADO
+  AUTH_OTP_VALIDADO
+  AUTH_2FA_ATIVADO
+  AUTH_2FA_VALIDADO
+  AUTH_SENHA_ALTERADA
+  AUTH_CONTA_CRIADA
+  AUTH_SSO_LOGIN
+  CASO_CRIADO
+  CASO_STATUS_ALTERADO
+  CASO_MODERADO
+  CASO_TERMO_ACEITO
+  ADMIN_ACAO
+}
+
+enum StatusEmpresa {
+  PENDENTE
+  VERIFICADA
+  EM_ANALISE
+  ALTO_RISCO
+}
+
+// ─────────────────────────────────────────────
+// USUÁRIO — consumidor, empresa e admin
+// ─────────────────────────────────────────────
+
+model Usuario {
+  id               String    @id @default(uuid())
+  email            String    @unique
+  senhaHash        String?
+  perfil           Perfil
+  nome             String
+  telefone         String?
+  emailVerificado  Boolean   @default(false)
+  ativo            Boolean   @default(true)
+  twoFaAtivado     Boolean   @default(false)
+  twoFaSegredo     String?
+  googleId         String?   @unique
+  appleId          String?   @unique
+  criadoEm         DateTime  @default(now())
+  atualizadoEm     DateTime  @updatedAt
+  deletadoEm       DateTime?
+
+  tokens         RefreshToken[]
+  otpTokens      OtpToken[]
+  auditLogs      AuditLog[]
+  casosConsumidor Caso[]        @relation("CasoConsumidor")
+  empresa        Empresa?      @relation("UsuarioEmpresa")
+  termosAceitos  TermoAceite[]
+
+  @@map("usuarios")
+}
+
+// ─────────────────────────────────────────────
+// EMPRESA
+// ─────────────────────────────────────────────
+
+model Empresa {
+  id             String        @id @default(uuid())
+  usuarioId      String        @unique
+  cnpj           String        @unique
+  razaoSocial    String
+  nomeFantasia   String?
+  status         StatusEmpresa @default(PENDENTE)
+  trustScore     Float         @default(0)
+  logotipoUrl    String?
+  descricao      String?
+  criadoEm       DateTime      @default(now())
+  atualizadoEm   DateTime      @updatedAt
+
+  usuario    Usuario @relation("UsuarioEmpresa", fields: [usuarioId], references: [id])
+  casos      Caso[]  @relation("CasoEmpresa")
+
+  @@map("empresas")
+}
+
+// ─────────────────────────────────────────────
+// CASO — pipeline de 7 estados
+// ─────────────────────────────────────────────
+
+model Caso {
+  id              String     @id @default(uuid())
+  numero          String     @unique
+  consumidorId    String
+  empresaId       String
+  status          StatusCaso @default(ENVIADO)
+  titulo          String
+  descricao       String
+  tipoExperiencia String
+  criadoEm        DateTime   @default(now())
+  atualizadoEm    DateTime   @updatedAt
+  publicadoEm     DateTime?
+  resolvidoEm     DateTime?
+
+  consumidor    Usuario       @relation("CasoConsumidor", fields: [consumidorId], references: [id])
+  empresa       Empresa       @relation("CasoEmpresa", fields: [empresaId], references: [id])
+  timeline      TimelineCaso[]
+  evidencias    EvidenciaCaso[]
+  questionario  QuestionarioCaso?
+  termoAceite   TermoAceite?
+
+  @@map("casos")
+}
+
+// ─────────────────────────────────────────────
+// TIMELINE DO CASO — imutável, append-only
+// ─────────────────────────────────────────────
+
+model TimelineCaso {
+  id          String     @id @default(uuid())
+  casoId      String
+  statusAntes StatusCaso?
+  statusDepois StatusCaso
+  observacao  String?
+  operadorId  String?
+  ip          String?
+  criadoEm   DateTime   @default(now())
+
+  caso Caso @relation(fields: [casoId], references: [id])
+
+  @@map("timeline_casos")
+}
+
+// ─────────────────────────────────────────────
+// EVIDÊNCIAS DO CASO
+// ─────────────────────────────────────────────
+
+model EvidenciaCaso {
+  id        String   @id @default(uuid())
+  casoId    String
+  tipo      String
+  url       String
+  tamanho   Int
+  mimeType  String
+  criadoEm  DateTime @default(now())
+
+  caso Caso @relation(fields: [casoId], references: [id])
+
+  @@map("evidencias_caso")
+}
+
+// ─────────────────────────────────────────────
+// QUESTIONÁRIO ESTRUTURADO DO CASO
+// ─────────────────────────────────────────────
+
+model QuestionarioCaso {
+  id             String   @id @default(uuid())
+  casoId         String   @unique
+  respostas      Json
+  criadoEm       DateTime @default(now())
+
+  caso Caso @relation(fields: [casoId], references: [id])
+
+  @@map("questionarios_caso")
+}
+
+// ─────────────────────────────────────────────
+// ACEITE DO TERMO LEGAL — trilha LGPD/CDC
+// ─────────────────────────────────────────────
+
+model TermoAceite {
+  id          String   @id @default(uuid())
+  casoId      String   @unique
+  usuarioId   String
+  versaoTermo String
+  ipOrigem    String
+  userAgent   String?
+  aceitoEm    DateTime @default(now())
+
+  caso    Caso    @relation(fields: [casoId], references: [id])
+  usuario Usuario @relation(fields: [usuarioId], references: [id])
+
+  @@map("termos_aceite")
+}
+
+// ─────────────────────────────────────────────
+// OTP TOKEN — email e SMS
+// ─────────────────────────────────────────────
+
+model OtpToken {
+  id         String   @id @default(uuid())
+  usuarioId  String?
+  email      String
+  codigo     String
+  usado      Boolean  @default(false)
+  expiradoEm DateTime
+  criadoEm   DateTime @default(now())
+
+  usuario Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@map("otp_tokens")
+}
+
+// ─────────────────────────────────────────────
+// REFRESH TOKEN — rotação de JWT
+// ─────────────────────────────────────────────
+
+model RefreshToken {
+  id         String   @id @default(uuid())
+  usuarioId  String
+  tokenHash  String   @unique
+  expiradoEm DateTime
+  revogado   Boolean  @default(false)
+  criadoEm   DateTime @default(now())
+
+  usuario Usuario @relation(fields: [usuarioId], references: [id])
+
+  @@map("refresh_tokens")
+}
+
+// ─────────────────────────────────────────────
+// TC1-API-03: módulo src/modules/auth
+// ─────────────────────────────────────────────
+
+enum UserRole {
+  consumer
+  company
+  admin
+}
+
+enum UserStatus {
+  pending_otp
+  active
+  suspended
+  deleted
+}
+
+enum SsoProvider {
+  google
+  apple
+}
+
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique @db.Citext
+  passwordHash String?    @map("password_hash") @db.Text
+  role         UserRole
+  status       UserStatus @default(pending_otp)
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+  deletedAt    DateTime?  @map("deleted_at")
+
+  consumerProfile      ConsumerProfile?
+  companyProfile       CompanyProfile?
+  ssoIdentities        SsoIdentity[]
+  companyClaims        CompanyClaim[]
+  cases                Case[]
+  legalTermsPublished  LegalTermV2[]
+  termAcceptances      CaseTermAcceptance[]
+
+  @@map("users")
+}
+
+model ConsumerProfile {
+  userId              String   @id @map("user_id")
+  fullName            String   @map("full_name") @db.Text
+  phone               String?  @db.Text
+  acceptedLgpdAt      DateTime @map("accepted_lgpd_at") @db.Timestamptz
+  acceptedLgpdVersion String   @map("accepted_lgpd_version") @db.Text
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("consumer_profiles")
+}
+
+model SsoIdentity {
+  id        String      @id @default(uuid())
+  userId    String      @map("user_id")
+  provider  SsoProvider
+  subject   String      @db.Text
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([provider, subject])
+  @@map("sso_identities")
+}
+
+// ─────────────────────────────────────────────
+// TC1-API-04: módulo src/modules/auth/company
+// ─────────────────────────────────────────────
+
+enum CompanyStatus {
+  unclaimed
+  pending_review
+  active
+  suspended
+}
+
+enum CompanyProfileRole {
+  owner
+  operator
+}
+
+enum ClaimStatus {
+  pending_review
+  approved
+  rejected
+}
+
+model Company {
+  id        String        @id @default(uuid())
+  cnpj      String        @unique @db.Char(14)
+  legalName String        @map("legal_name") @db.Text
+  tradeName String?       @map("trade_name") @db.Text
+  status    CompanyStatus @default(unclaimed)
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
+
+  companyProfiles CompanyProfile[]
+  claims          CompanyClaim[]
+  cases           Case[]
+
+  @@map("companies")
+}
+
+model CompanyProfile {
+  userId    String             @id @map("user_id")
+  companyId String             @map("company_id")
+  role      CompanyProfileRole @default(owner)
+  createdAt DateTime           @default(now()) @map("created_at")
+
+  user    User    @relation(fields: [userId], references: [id])
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@map("company_profiles")
+}
+
+model CompanyClaim {
+  id              String      @id @default(uuid())
+  companyId       String      @map("company_id")
+  requesterUserId String      @map("requester_user_id")
+  status          ClaimStatus @default(pending_review)
+  submittedAt     DateTime    @default(now()) @map("submitted_at")
+  reviewedAt      DateTime?   @map("reviewed_at")
+  reviewedBy      String?     @map("reviewed_by")
+  rejectionReason String?     @map("rejection_reason") @db.Text
+
+  company   Company               @relation(fields: [companyId], references: [id])
+  requester User                  @relation(fields: [requesterUserId], references: [id])
+  documents CompanyClaimDocument[]
+
+  @@map("company_claims")
+}
+
+model CompanyClaimDocument {
+  id         String   @id @default(uuid())
+  claimId    String   @map("claim_id")
+  url        String   @db.Text
+  fileName   String   @map("file_name") @db.Text
+  mimeType   String   @map("mime_type") @db.Text
+  sizeBytes  Int      @map("size_bytes")
+  uploadedAt DateTime @default(now()) @map("uploaded_at")
+
+  claim CompanyClaim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@map("company_claim_documents")
+}
+
+model ModuleAuditLog {
+  id          String   @id @default(uuid())
+  actorUserId String?  @map("actor_user_id")
+  action      String   @db.Text
+  entity      String   @db.Text
+  entityId    String?  @map("entity_id") @db.Uuid
+  payload     Json     @default("{}")
+  ip          String?  @db.Inet
+  userAgent   String?  @map("user_agent") @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("module_audit_logs")
+}
+
+// ─────────────────────────────────────────────
+// TC1-API-05: módulo src/modules/cases
+// ─────────────────────────────────────────────
+
+enum CaseStatus {
+  ENVIADO
+  EM_MODERACAO
+  PUBLICADO
+  AGUARDANDO_RESPOSTA_EMPRESA
+  EM_NEGOCIACAO
+  RESOLVIDO
+  NAO_RESOLVIDO
+}
+
+enum ExperienceType {
+  reclamacao
+  denuncia
+  elogio
+  duvida_resolvida
+}
+
+enum CaseCategory {
+  imoveis
+  servicos
+  ecommerce
+  financeiro
+  saude
+  educacao
+  outro
+}
+
+model Case {
+  id             String         @id @default(uuid())
+  publicId       String?        @unique @map("public_id") @db.Text
+  status         CaseStatus     @default(ENVIADO)
+  consumerUserId String         @map("consumer_user_id")
+  companyId      String         @map("company_id")
+  experienceType ExperienceType @map("experience_type")
+  category       CaseCategory
+  description    String         @db.Text
+  monetaryValue  Decimal?       @map("monetary_value") @db.Decimal(12, 2)
+  occurredAt     DateTime       @map("occurred_at") @db.Date
+  submittedAt    DateTime       @default(now()) @map("submitted_at") @db.Timestamptz
+  publishedAt    DateTime?      @map("published_at") @db.Timestamptz
+  closedAt       DateTime?      @map("closed_at") @db.Timestamptz
+
+  consumer User    @relation(fields: [consumerUserId], references: [id])
+  company  Company @relation(fields: [companyId], references: [id])
+
+  statusTransitions CaseStatusTransition[]
+  termAcceptance    CaseTermAcceptance?
+
+  @@index([consumerUserId, submittedAt(sort: Desc)], name: "cases_consumer_submitted_idx")
+  @@index([companyId, status], name: "cases_company_status_idx")
+  @@index([status, submittedAt(sort: Desc)], name: "cases_status_submitted_idx")
+  @@map("cases")
+}
+
+enum ActorRole {
+  system
+  admin
+  company
+  consumer
+}
+
+model CaseStatusTransition {
+  id          String     @id @default(uuid())
+  caseId      String     @map("case_id")
+  fromStatus  CaseStatus @map("from_status")
+  toStatus    CaseStatus @map("to_status")
+  actorUserId String?    @map("actor_user_id")
+  actorRole   ActorRole  @map("actor_role")
+  reason      String?    @db.Text
+  payload     Json?
+  ip          String?    @db.Inet
+  occurredAt  DateTime   @default(now()) @map("occurred_at") @db.Timestamptz
+
+  case Case @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([caseId, occurredAt(sort: Desc)], name: "cst_case_occurred_idx")
+  @@map("case_status_transitions")
+}
+
+// ─────────────────────────────────────────────
+// TC1-API-07: Termos legais versionados + aceite por caso
+// ─────────────────────────────────────────────
+
+enum TermKind {
+  denuncia
+  lgpd
+  termos_uso
+}
+
+model LegalTermV2 {
+  id          String    @id @default(uuid())
+  version     String
+  kind        TermKind
+  content     String    @db.Text
+  contentHash String    @map("content_hash") @db.Char(64)
+  publishedBy String?   @map("published_by")
+  publishedAt DateTime? @map("published_at") @db.Timestamptz
+  active      Boolean   @default(true)
+
+  publisher   User?               @relation(fields: [publishedBy], references: [id])
+  acceptances CaseTermAcceptance[]
+
+  @@unique([version, kind], name: "legal_terms_v2_version_kind_unique")
+  @@index([kind, active], name: "ltv2_kind_active_idx")
+  @@map("legal_terms_v2")
+}
+
+model CaseTermAcceptance {
+  id          String   @id @default(uuid())
+  caseId      String   @unique @map("case_id")
+  userId      String   @map("user_id")
+  termId      String   @map("term_id")
+  termVersion String   @map("term_version")
+  contentHash String   @map("content_hash") @db.Char(64)
+  acceptedAt  DateTime @default(now()) @map("accepted_at") @db.Timestamptz
+  ip          String?  @db.Inet
+  userAgent   String?  @map("user_agent") @db.Text
+
+  case Case        @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  user User        @relation(fields: [userId], references: [id])
+  term LegalTermV2 @relation(fields: [termId], references: [id])
+
+  @@index([termId, acceptedAt(sort: Desc)], name: "cta_term_accepted_idx")
+  @@map("case_term_acceptances")
+}
+
+// ─────────────────────────────────────────────
+// TERMO LEGAL — versionamento com hash imutável
+// ─────────────────────────────────────────────
+
+model LegalTerm {
+  id        String   @id @default(uuid())
+  versao    String   @unique
+  conteudo  String
+  hash      String
+  ativo     Boolean  @default(true)
+  criadoEm DateTime @default(now())
+
+  @@map("legal_terms")
+}
+
+// ─────────────────────────────────────────────
+// AUDIT LOG — rastreabilidade de todas as ações
+// ─────────────────────────────────────────────
+
+model AuditLog {
+  id        String        @id @default(uuid())
+  usuarioId String?
+  tipo      TipoAuditoria
+  detalhe   Json?
+  ip        String?
+  userAgent String?
+  criadoEm  DateTime      @default(now())
+
+  usuario Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@map("audit_logs")
+}
