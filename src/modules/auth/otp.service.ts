@@ -59,7 +59,11 @@ export class OtpService {
     void this.events.publish(AUTH_STREAM, event);
   }
 
-  async verify(userId: string, inputCode: string): Promise<void> {
+  async verify(
+    userId: string,
+    inputCode: string,
+    purpose: OtpVerifiedPayload['purpose'] = 'register',
+  ): Promise<void> {
     const attKey = this.attemptsKey(userId);
     const attempts = parseInt((await this.redis.get(attKey)) ?? '0', 10);
 
@@ -100,7 +104,7 @@ export class OtpService {
 
     const verifiedEvent = buildEvent<OtpVerifiedPayload>(AUTH_OTP_VERIFIED_V1, 1, {
       userId,
-      purpose: 'register',
+      purpose,
       success: true,
       attempts,
     });

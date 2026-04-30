@@ -158,7 +158,7 @@ export class CompanyAuthService {
       });
     }
 
-    await this.otpService.verify(payload.sub, otp);
+    await this.otpService.verify(payload.sub, otp, 'register');
 
     const user = await this.prisma.user.update({
       where: { id: payload.sub },

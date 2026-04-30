@@ -88,7 +88,7 @@ A função `maskDestination()` em `src/common/events/schemas/auth/otp-sent.ts` a
 
 Publicado quando o código OTP é verificado com sucesso.
 
-**Ponto de publicação:** `OtpService.verify()` (após verificação bem-sucedida)
+**Ponto de publicação:** `OtpService.verify(userId, code, purpose)` (após verificação bem-sucedida)
 
 ```typescript
 interface OtpVerifiedPayload {

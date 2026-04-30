@@ -116,7 +116,7 @@ export class ConsumerAuthService {
       });
     }
 
-    await this.otpService.verify(payload.sub, dto.otp);
+    await this.otpService.verify(payload.sub, dto.otp, 'register');
 
     await this.prisma.user.update({
       where: { id: payload.sub },
