@@ -1,6 +1,9 @@
-﻿# TrustCheck API — Sprint 1
+# TrustCheck API — Sprint 1
 
 Backend central da plataforma TrustCheck. Módulos **AUTH** e **CASOS** implementados nesta sprint.
+
+## Estado real atual
+- TC3-QA-08 concluida: plano E2E P0 da API documentado em docs/qa/tc3-qa-08-e2e-plan.md.
 
 ## Setup rápido
 
@@ -110,3 +113,4 @@ npx jest test/e2e/admin-auth.e2e.spec.ts
 - https://github.com/TrustCheckApp/Docs
 - `Docs/docs/01-visao-produto-e-modulos.md`
 - `Docs/docs/03-planejamento-sprints.md`
+
