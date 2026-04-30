@@ -1,0 +1,309 @@
+name: E2E Auth Pipeline (TC1-API-09)
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+env:
+  API_URL: http://localhost:3000
+  NODE_VERSION: "20"
+
+jobs:
+  # ────────────────────────────────────────────────────────────────
+  # JOB 1: SDK generation + Api own E2E
+  # ────────────────────────────────────────────────────────────────
+  api-e2e:
+    name: Api — SDK + E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: trustcheck
+          POSTGRES_PASSWORD: trustcheck
+          POSTGRES_DB: trustcheck_e2e
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U trustcheck -d trustcheck_e2e"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - name: Checkout Api
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+        env:
+          DATABASE_URL: postgresql://trustcheck:trustcheck@localhost:5432/trustcheck_e2e
+
+      - name: Run migrations
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: postgresql://trustcheck:trustcheck@localhost:5432/trustcheck_e2e
+
+      - name: Generate SDK
+        run: npm run sdk:generate
+
+      - name: Build SDK
+        run: npm run sdk:build
+
+      - name: Start API (background)
+        run: npm run start &
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://trustcheck:trustcheck@localhost:5432/trustcheck_e2e
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          JWT_SECRET: e2e-jwt-secret-ci
+          JWT_REFRESH_SECRET: e2e-refresh-secret-ci
+          JWT_EXPIRES_IN: 15m
+          OTP_LENGTH: 6
+          OTP_EXPIRATION_SECONDS: 300
+          PORT: 3000
+
+      - name: Wait for API
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3000/health && break || sleep 2
+          done
+
+      - name: Run Api E2E tests
+        run: npm run test:e2e
+        env:
+          DATABASE_URL: postgresql://trustcheck:trustcheck@localhost:5432/trustcheck_e2e
+          REDIS_HOST: localhost
+          JWT_SECRET: e2e-jwt-secret-ci
+          JWT_REFRESH_SECRET: e2e-refresh-secret-ci
+          API_URL: http://localhost:3000
+
+      - name: Upload SDK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-ts
+          path: packages/sdk-ts/dist/
+          retention-days: 7
+
+  # ────────────────────────────────────────────────────────────────
+  # JOB 2: Cross-repo E2E (Mobile + Admin-Web)
+  # ────────────────────────────────────────────────────────────────
+  cross-repo-e2e:
+    name: Cross-repo E2E — ${{ matrix.repo }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: api-e2e
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - repo: Mobile
+            repository: TrustCheckApp/Mobile
+            test_script: test:e2e:auth
+            test_dir: e2e-auth
+          - repo: Admin-Web
+            repository: TrustCheckApp/Admin-Web
+            test_script: test:e2e:auth
+            test_dir: e2e-auth
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: trustcheck
+          POSTGRES_PASSWORD: trustcheck
+          POSTGRES_DB: trustcheck_e2e
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U trustcheck -d trustcheck_e2e"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - name: Checkout Api (for stack + SDK)
+        uses: actions/checkout@v4
+        with:
+          path: api
+
+      - name: Checkout ${{ matrix.repo }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.repository }}
+          path: client
+          token: ${{ secrets.CROSS_REPO_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Api deps + generate
+        working-directory: api
+        run: |
+          npm ci
+          npx prisma generate
+          npx prisma migrate deploy
+          npm run sdk:generate
+          npm run sdk:build
+        env:
+          DATABASE_URL: postgresql://trustcheck:trustcheck@localhost:5432/trustcheck_e2e
+
+      - name: Download SDK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-ts
+          path: api/packages/sdk-ts/dist/
+
+      - name: Start API (background)
+        working-directory: api
+        run: npm run start &
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://trustcheck:trustcheck@localhost:5432/trustcheck_e2e
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          JWT_SECRET: e2e-jwt-secret-ci
+          JWT_REFRESH_SECRET: e2e-refresh-secret-ci
+          JWT_EXPIRES_IN: 15m
+          OTP_LENGTH: 6
+          OTP_EXPIRATION_SECONDS: 300
+          PORT: 3000
+
+      - name: Wait for API
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3000/health && break || sleep 2
+          done
+
+      - name: Install client deps
+        working-directory: client
+        run: npm ci
+
+      - name: Run ${{ matrix.repo }} E2E tests
+        working-directory: client
+        run: npm run ${{ matrix.test_script }}
+        env:
+          API_URL: http://localhost:3000
+          SDK_PATH: ${{ github.workspace }}/api/packages/sdk-ts/dist
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results-${{ matrix.repo }}
+          path: client/e2e-auth/results/
+          retention-days: 7
+
+  # ────────────────────────────────────────────────────────────────
+  # JOB 3: Gerar relatório E2E
+  # ────────────────────────────────────────────────────────────────
+  e2e-report:
+    name: Gerar relatório E2E
+    runs-on: ubuntu-latest
+    needs: [api-e2e, cross-repo-e2e]
+    if: always()
+
+    steps:
+      - name: Checkout Docs
+        uses: actions/checkout@v4
+        with:
+          repository: TrustCheckApp/Docs
+          path: docs
+          token: ${{ secrets.CROSS_REPO_TOKEN }}
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Generate report
+        run: |
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          STATUS_API="${{ needs.api-e2e.result }}"
+          STATUS_CROSS="${{ needs.cross-repo-e2e.result }}"
+
+          cat > docs/docs/sprint-01/relatorio-e2e.md << EOF
+          # Relatório E2E — Sprint 01 (TC1-API-09)
+
+          **Gerado em:** ${DATE}
+          **Workflow run:** [Ver no GitHub](${RUN_URL})
+          **Commit:** \`${{ github.sha }}\`
+          **Branch:** \`${{ github.ref_name }}\`
+
+          ## Resultado por job
+
+          | Job | Status |
+          |-----|--------|
+          | api-e2e (SDK + Api E2E) | ${STATUS_API} |
+          | cross-repo-e2e (Mobile + Admin-Web) | ${STATUS_CROSS} |
+
+          ## Cenários (A–J)
+
+          | # | Cenário | Repo | Status |
+          |---|---------|------|--------|
+          | A | Consumidor: cadastro→OTP→confirm→login→refresh→logout | Mobile | — |
+          | B | Consumidor SSO Google: registra→tokens→/me | Mobile | — |
+          | C | Empresa: cadastro→OTP→TOTP enroll→login TOTP→/me | Mobile | — |
+          | D | Empresa: login sem TOTP → 401 TOTP_REQUIRED | Mobile | — |
+          | E | Admin: login TOTP → /admin/health | Admin-Web | — |
+          | F | Bloqueio: 5 OTPs errados → 429 OTP_MAX_ATTEMPTS | Mobile | — |
+          | G | Bloqueio: 6 envios/h → 429 OTP_RATE_LIMIT_HOURLY | Mobile | — |
+          | H | SSO sem LGPD → 422 LGPD_NOT_ACCEPTED | Mobile | — |
+          | I | Claim empresa → admin aprova → status approved | Admin-Web | — |
+          | J | Token expirado → 401 TOKEN_EXPIRED; refresh resolve | Mobile + Admin-Web | — |
+
+          > **Nota:** Os resultados detalhados por cenário estão disponíveis nos artifacts
+          > `e2e-results-Mobile` e `e2e-results-Admin-Web` desta execução.
+
+          ## Tempo de execução
+
+          Consultar aba "Summary" do workflow para métricas de duração por job.
+
+          ## Artefatos
+
+          - \`sdk-ts\` — SDK TypeScript gerado a partir do openapi.yaml v1.4.0
+          - \`e2e-results-Mobile\` — JUnit XML dos cenários A, B, C, D, F, G, H, J
+          - \`e2e-results-Admin-Web\` — JUnit XML dos cenários E, I, J
+          EOF
+
+      - name: Upload relatório como artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-e2e
+          path: docs/docs/sprint-01/relatorio-e2e.md
+          retention-days: 30
