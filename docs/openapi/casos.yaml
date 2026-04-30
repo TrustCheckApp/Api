@@ -1,242 +1,182 @@
 openapi: 3.0.3
 info:
-  title: TrustCheck API — CASOS
+  title: TrustCheck API - CASOS
   description: |
-    Contrato oficial do módulo CASOS para consumo por Mobile e Admin-Web.
-    Sprint 1 — janela: 27 abr a 3 mai 2026.
-    Telas cobertas: M08, M09, M10, M11, M12, M13, E05, E06, W03, W07.
-
-    ## Pipeline de estados (imutável V1)
-    1. ENVIADO → 2. EM_MODERACAO → 3. PUBLICADO → 4. AGUARDANDO_RESPOSTA_EMPRESA
-    → 5. EM_NEGOCIACAO → 6. RESOLVIDO | 7. NAO_RESOLVIDO
-
-    ## LGPD / CDC
-    - Step 4 exige aceite do termo legal com log de IP, data/hora e versão.
-    - Timeline é append-only — imutável por design.
-  version: "1.0.0"
-
+    Contrato do modulo CASOS alinhado aos endpoints implementados na Sprint 01.
+    Pipeline oficial: ENVIADO -> EM_MODERACAO -> PUBLICADO -> AGUARDANDO_RESPOSTA_EMPRESA -> EM_NEGOCIACAO -> RESOLVIDO | NAO_RESOLVIDO.
+  version: "1.1.0"
 servers:
   - url: http://localhost:3000
-    description: Desenvolvimento local
   - url: https://api.trustcheck.com.br
-    description: Produção
 
 security:
   - bearerAuth: []
 
 tags:
-  - name: wizard
-    description: Criação de denúncia em 4 etapas
-  - name: casos-consumidor
-    description: Visualização e acompanhamento pelo consumidor
-  - name: casos-empresa
-    description: Fila e operação pela empresa
-  - name: moderacao
-    description: Fila e ações de moderação pelo admin (W03)
-  - name: gestao-casos
-    description: Intervenção administrativa em casos (W07)
+  - name: cases
+  - name: legal-audit
 
 paths:
-  /casos/wizard/step1:
+  /cases:
     post:
-      tags: [wizard]
-      summary: Step 1 — Identificar empresa alvo (M08)
+      tags: [cases]
+      summary: Abrir novo caso
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Step1Request'
+              $ref: '#/components/schemas/OpenCaseRequest'
       responses:
         "201":
-          description: Rascunho do caso criado
+          description: Caso criado
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RascunhoResponse'
+                $ref: '#/components/schemas/CaseCreatedResponse'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /cases/{id}:
+    get:
+      tags: [cases]
+      summary: Consultar caso por UUID ou publicId
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Caso encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseResponse'
         "404":
           $ref: '#/components/responses/NotFound'
 
-  /casos/wizard/{casoId}/step2:
-    put:
-      tags: [wizard]
-      summary: Step 2 — Registrar ocorrido (M09)
-      parameters:
-        - $ref: '#/components/parameters/CasoId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Step2Request'
-      responses:
-        "200":
-          description: Dados do ocorrido registrados
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CasoIdResponse'
-
-  /casos/wizard/{casoId}/step3:
-    put:
-      tags: [wizard]
-      summary: Step 3 — Anexar evidências (M10)
-      parameters:
-        - $ref: '#/components/parameters/CasoId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Step3Request'
-      responses:
-        "200":
-          description: Evidências registradas
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CasoIdResponse'
-
-  /casos/wizard/{casoId}/step4:
-    put:
-      tags: [wizard]
-      summary: Step 4 — Questionário + aceite do termo legal (M11)
-      description: |
-        Finaliza a denúncia. Exige `termoAceito: true`.
-        Registra IP, data/hora e versão do termo (trilha LGPD/CDC).
-        Avança status para EM_MODERACAO.
-      parameters:
-        - $ref: '#/components/parameters/CasoId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Step4Request'
-      responses:
-        "200":
-          description: Caso enviado para moderação
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CasoFinalizadoResponse'
-        "400":
-          $ref: '#/components/responses/BadRequest'
-
-  /casos/meus:
+  /cases/{id}/audit:
     get:
-      tags: [casos-consumidor]
-      summary: Listar meus casos (M12)
+      tags: [legal-audit]
+      summary: Consultar trilha auditavel do caso e aceite legal
       parameters:
-        - name: status
-          in: query
+        - in: path
+          name: id
+          required: true
           schema:
-            $ref: '#/components/schemas/StatusCaso'
+            type: string
       responses:
         "200":
-          description: Lista de casos do consumidor
+          description: Auditoria do caso
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/CasoResumo'
-
-  /casos/{casoId}:
-    get:
-      tags: [casos-consumidor, casos-empresa, gestao-casos]
-      summary: Detalhe completo do caso com timeline (M13, E06, W07)
-      parameters:
-        - $ref: '#/components/parameters/CasoId'
-      responses:
-        "200":
-          description: Caso com timeline, evidências e questionário
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CasoDetalhe'
-        "403":
-          $ref: '#/components/responses/Forbidden'
+                $ref: '#/components/schemas/CaseAuditResponse'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
         "404":
           $ref: '#/components/responses/NotFound'
 
-  /casos/moderacao/fila:
-    get:
-      tags: [moderacao]
-      summary: Fila de casos aguardando moderação (W03)
-      description: Acesso restrito a perfil ADMIN
-      responses:
-        "200":
-          description: Lista de casos em EM_MODERACAO
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/CasoDetalhe'
-
-  /casos/{casoId}/moderar:
-    put:
-      tags: [moderacao]
-      summary: Decisão de moderação — publicar ou rejeitar (W03)
+  /cases/{id}/moderation/start:
+    post:
+      tags: [cases]
+      summary: ENVIADO -> EM_MODERACAO
       parameters:
-        - $ref: '#/components/parameters/CasoId'
+        - $ref: '#/components/parameters/CaseId'
+      responses:
+        "200": { $ref: '#/components/responses/TransitionOk' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409": { $ref: '#/components/responses/Conflict' }
+
+  /cases/{id}/moderation/approve:
+    post:
+      tags: [cases]
+      summary: EM_MODERACAO -> PUBLICADO
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
+      responses:
+        "200": { $ref: '#/components/responses/TransitionOk' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409": { $ref: '#/components/responses/Conflict' }
+
+  /cases/{id}/moderation/reject:
+    post:
+      tags: [cases]
+      summary: EM_MODERACAO -> NAO_RESOLVIDO
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ModerarRequest'
+              $ref: '#/components/schemas/RejectCaseRequest'
       responses:
-        "200":
-          description: Caso moderado com sucesso
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ModeracaoResponse'
-        "400":
-          $ref: '#/components/responses/BadRequest'
+        "200": { $ref: '#/components/responses/TransitionOk' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409": { $ref: '#/components/responses/Conflict' }
 
-  /casos/{casoId}/status:
-    put:
-      tags: [gestao-casos]
-      summary: Alterar status do caso — transições controladas pelo pipeline (W07)
+  /cases/{id}/notify-company:
+    post:
+      tags: [cases]
+      summary: PUBLICADO -> AGUARDANDO_RESPOSTA_EMPRESA (assinatura interna)
       parameters:
-        - $ref: '#/components/parameters/CasoId'
+        - $ref: '#/components/parameters/CaseId'
+      responses:
+        "200": { $ref: '#/components/responses/TransitionOk' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "409": { $ref: '#/components/responses/Conflict' }
+
+  /cases/{id}/company/respond:
+    post:
+      tags: [cases]
+      summary: AGUARDANDO_RESPOSTA_EMPRESA -> EM_NEGOCIACAO
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
+      responses:
+        "200": { $ref: '#/components/responses/TransitionOk' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409": { $ref: '#/components/responses/Conflict' }
+
+  /cases/{id}/resolve:
+    post:
+      tags: [cases]
+      summary: EM_NEGOCIACAO -> RESOLVIDO
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AlterarStatusRequest'
+              $ref: '#/components/schemas/ResolveCaseRequest'
       responses:
-        "200":
-          description: Status alterado
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StatusAlteradoResponse'
-        "400":
-          $ref: '#/components/responses/BadRequest'
+        "200": { $ref: '#/components/responses/TransitionOk' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409": { $ref: '#/components/responses/Conflict' }
 
-  /casos/empresa/fila:
-    get:
-      tags: [casos-empresa]
-      summary: Fila de casos da empresa (E05)
+  /cases/{id}/close-unresolved:
+    post:
+      tags: [cases]
+      summary: EM_NEGOCIACAO -> NAO_RESOLVIDO
       parameters:
-        - name: status
-          in: query
-          schema:
-            $ref: '#/components/schemas/StatusCaso'
+        - $ref: '#/components/parameters/CaseId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CloseUnresolvedRequest'
       responses:
-        "200":
-          description: Casos atribuídos à empresa
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/CasoResumo'
+        "200": { $ref: '#/components/responses/TransitionOk' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409": { $ref: '#/components/responses/Conflict' }
 
 components:
   securitySchemes:
@@ -246,239 +186,127 @@ components:
       bearerFormat: JWT
 
   parameters:
-    CasoId:
-      name: casoId
+    CaseId:
       in: path
+      name: id
       required: true
       schema:
         type: string
         format: uuid
 
   responses:
-    BadRequest:
-      description: Requisição inválida
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErroResponse'
+    Unauthorized:
+      description: Nao autorizado
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
     Forbidden:
-      description: Sem permissão
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErroResponse'
+      description: Sem permissao
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
     NotFound:
-      description: Não encontrado
+      description: Recurso nao encontrado
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    Conflict:
+      description: Violacao de regra de negocio/transicao
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    UnprocessableEntity:
+      description: Validacao semantica invalida
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+    TransitionOk:
+      description: Transicao executada
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErroResponse'
+            $ref: '#/components/schemas/TransitionResponse'
 
   schemas:
-    StatusCaso:
+    OpenCaseRequest:
+      type: object
+      required: [companyId, experienceType, category, description, occurredAt, legalAcceptance]
+      properties:
+        companyId: { type: string, format: uuid }
+        experienceType: { type: string, enum: [reclamacao, denuncia, elogio, duvida_resolvida] }
+        category: { type: string, enum: [imoveis, servicos, ecommerce, financeiro, saude, educacao, outro] }
+        description: { type: string, minLength: 50, maxLength: 4000 }
+        monetaryValue: { type: number }
+        occurredAt: { type: string, format: date }
+        legalAcceptance:
+          type: object
+          required: [termId, contentHashEcho]
+          properties:
+            termId: { type: string }
+            contentHashEcho: { type: string }
+
+    CaseCreatedResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        publicId: { type: string }
+        status: { $ref: '#/components/schemas/CaseStatus' }
+
+    CaseResponse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        publicId: { type: string }
+        status: { $ref: '#/components/schemas/CaseStatus' }
+        experienceType: { type: string }
+        category: { type: string }
+        description: { type: string }
+        monetaryValue: { type: number, nullable: true }
+        occurredAt: { type: string, format: date }
+        submittedAt: { type: string, format: date-time }
+        publishedAt: { type: string, format: date-time, nullable: true }
+
+    CaseAuditResponse:
+      type: object
+      properties:
+        case:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            status: { $ref: '#/components/schemas/CaseStatus' }
+        termAcceptance:
+          type: object
+          nullable: true
+          properties:
+            termVersion: { type: string }
+            contentHash: { type: string }
+            acceptedAt: { type: string, format: date-time }
+            ip: { type: string }
+
+    ResolveCaseRequest:
+      type: object
+      required: [consumerConfirmed, companyConfirmed]
+      properties:
+        consumerConfirmed: { type: boolean }
+        companyConfirmed: { type: boolean }
+
+    RejectCaseRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string }
+
+    CloseUnresolvedRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string }
+
+    TransitionResponse:
+      type: object
+      properties:
+        caseId: { type: string, format: uuid }
+        fromStatus: { $ref: '#/components/schemas/CaseStatus' }
+        toStatus: { $ref: '#/components/schemas/CaseStatus' }
+        transitionId: { type: string, format: uuid }
+
+    CaseStatus:
       type: string
-      enum:
-        - ENVIADO
-        - EM_MODERACAO
-        - PUBLICADO
-        - AGUARDANDO_RESPOSTA_EMPRESA
-        - EM_NEGOCIACAO
-        - RESOLVIDO
-        - NAO_RESOLVIDO
+      enum: [ENVIADO, EM_MODERACAO, PUBLICADO, AGUARDANDO_RESPOSTA_EMPRESA, EM_NEGOCIACAO, RESOLVIDO, NAO_RESOLVIDO]
 
-    Step1Request:
-      type: object
-      required: [empresaId]
-      properties:
-        empresaId:
-          type: string
-          format: uuid
-
-    Step2Request:
-      type: object
-      required: [tipoExperiencia, descricao]
-      properties:
-        tipoExperiencia:
-          type: string
-          example: PRODUTO_DEFEITUOSO
-        descricao:
-          type: string
-          minLength: 30
-          maxLength: 5000
-        titulo:
-          type: string
-
-    EvidenciaInput:
-      type: object
-      required: [tipo, url, tamanho, mimeType]
-      properties:
-        tipo:
-          type: string
-          enum: [imagem, video, audio, documento]
-        url:
-          type: string
-        tamanho:
-          type: integer
-          description: Tamanho em bytes
-        mimeType:
-          type: string
-
-    Step3Request:
+    ErrorResponse:
       type: object
       properties:
-        evidencias:
-          type: array
-          items:
-            $ref: '#/components/schemas/EvidenciaInput'
-
-    Step4Request:
-      type: object
-      required: [respostas, termoAceito]
-      properties:
-        respostas:
-          type: object
-          description: Respostas do questionário estruturado
-          example:
-            tentouResolver: true
-            canaisUsados: ["telefone", "email"]
-            valorEnvolvido: 350.00
-        termoAceito:
-          type: boolean
-          description: Deve ser true para finalizar o envio
-
-    ModerarRequest:
-      type: object
-      required: [decisao]
-      properties:
-        decisao:
-          type: string
-          enum: [PUBLICADO, NAO_RESOLVIDO]
-        observacao:
-          type: string
-
-    AlterarStatusRequest:
-      type: object
-      required: [novoStatus]
-      properties:
-        novoStatus:
-          $ref: '#/components/schemas/StatusCaso'
-        observacao:
-          type: string
-
-    RascunhoResponse:
-      type: object
-      properties:
-        rascunhoId:
-          type: string
-          format: uuid
-
-    CasoIdResponse:
-      type: object
-      properties:
-        casoId:
-          type: string
-          format: uuid
-
-    CasoFinalizadoResponse:
-      type: object
-      properties:
-        casoId:
-          type: string
-          format: uuid
-        numero:
-          type: string
-          example: TC-2026-483921
-
-    CasoResumo:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        numero:
-          type: string
-        titulo:
-          type: string
-        status:
-          $ref: '#/components/schemas/StatusCaso'
-        criadoEm:
-          type: string
-          format: date-time
-        empresa:
-          type: object
-          properties:
-            razaoSocial:
-              type: string
-            nomeFantasia:
-              type: string
-            trustScore:
-              type: number
-
-    TimelineItem:
-      type: object
-      properties:
-        statusAntes:
-          $ref: '#/components/schemas/StatusCaso'
-        statusDepois:
-          $ref: '#/components/schemas/StatusCaso'
-        observacao:
-          type: string
-        criadoEm:
-          type: string
-          format: date-time
-
-    CasoDetalhe:
-      allOf:
-        - $ref: '#/components/schemas/CasoResumo'
-        - type: object
-          properties:
-            descricao:
-              type: string
-            tipoExperiencia:
-              type: string
-            timeline:
-              type: array
-              items:
-                $ref: '#/components/schemas/TimelineItem'
-            evidencias:
-              type: array
-              items:
-                $ref: '#/components/schemas/EvidenciaInput'
-            questionario:
-              type: object
-            termoAceite:
-              type: object
-              properties:
-                versaoTermo:
-                  type: string
-                aceitoEm:
-                  type: string
-                  format: date-time
-
-    ModeracaoResponse:
-      type: object
-      properties:
-        casoId:
-          type: string
-          format: uuid
-        novoStatus:
-          $ref: '#/components/schemas/StatusCaso'
-
-    StatusAlteradoResponse:
-      type: object
-      properties:
-        casoId:
-          type: string
-          format: uuid
-        novoStatus:
-          $ref: '#/components/schemas/StatusCaso'
-
-    ErroResponse:
-      type: object
-      properties:
-        statusCode:
-          type: integer
-        message:
-          type: string
-        error:
-          type: string
+        statusCode: { type: integer }
+        message: {}
+        error: { type: string }

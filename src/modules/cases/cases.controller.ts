@@ -10,6 +10,7 @@ import {
   ValidationPipe,
   Req,
   UseGuards,
+  ConflictException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -201,7 +202,10 @@ export class CasesController {
     @Req() req: AuthRequest,
   ) {
     if (!dto.consumerConfirmed || !dto.companyConfirmed) {
-      return { message: 'Ambas as partes devem confirmar para encerrar como resolvido.' };
+      throw new ConflictException({
+        code: 'CASE_RESOLUTION_CONFIRMATION_REQUIRED',
+        message: 'Ambas as partes devem confirmar para encerrar como resolvido.',
+      });
     }
     return this.stateMachine.transition(
       id,
