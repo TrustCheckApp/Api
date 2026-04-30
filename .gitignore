@@ -1,0 +1,7 @@
+# TrustCheck API — .gitignore
+node_modules/
+dist/
+.env
+*.local
+coverage/
+prisma/migrations/*.sql.shadow

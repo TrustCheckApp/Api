@@ -1,0 +1,1778 @@
+openapi: 3.1.0
+
+info:
+  title: TrustCheck API — AUTH (OTP, 2FA, Empresa)
+  description: |
+    Contrato de autenticação: OTP, 2FA TOTP, cadastro de consumidor e empresarial, claim por CNPJ.
+    Sprint 01 — TC1-API-02 / TC1-API-03 / TC1-API-04.
+    Histórias cobertas: HU-AUTH-02, HU-AUTH-07, HU-AUTH-08, HU-AUTH-09, HU-AUTH-10, HU-AUTH-11.
+  version: "1.4.0"
+  contact:
+    name: TrustCheck Engineering
+
+x-fluxos:
+  fluxo-1-otp-cadastro:
+    descricao: Envio e verificação de OTP no cadastro de consumidor (HU-AUTH-02)
+    passos:
+      1: "Cliente chama POST /auth/otp/send com { email, finalidade: CADASTRO }"
+      2: "API gera código de 6 dígitos, armazena hash no Redis com TTL 300s e aciona Integrations"
+      3: "Usuário informa o código recebido em POST /auth/otp/verify"
+      4: "API valida hash, marca e-mail como verificado e emite access + refresh token"
+      5: "Código é invalidado após uso (uso único)"
+
+  fluxo-2-otp-recuperacao-senha:
+    descricao: Envio e verificação de OTP para recuperação de senha (HU-AUTH-04)
+    passos:
+      1: "Cliente chama POST /auth/otp/send com { email, finalidade: RECUPERACAO_SENHA }"
+      2: "API gera código com TTL 900s (15 min) e aciona Integrations"
+      3: "Usuário informa código + nova senha em POST /auth/otp/verify"
+      4: "API valida, atualiza senha, revoga todos os refresh tokens existentes"
+      5: "2FA permanece ativo — não é desativado por este fluxo"
+
+  fluxo-3-enrolamento-2fa:
+    descricao: Ativação do TOTP para empresa e admin (HU-AUTH-09, HU-AUTH-10)
+    passos:
+      1: "Usuário autenticado chama POST /auth/2fa/totp/enroll (requer JWT válido)"
+      2: "API gera segredo de 160 bits em base32, calcula otpauth URI e retorna QR Code data-URL"
+      3: "API gera 10 recovery codes de 10 dígitos (uso único) e os retorna neste momento"
+      4: "Usuário configura o autenticador e valida o primeiro código em POST /auth/2fa/totp/verify"
+      5: "API ativa o 2FA — próximos logins exigirão TOTP antes de emitir JWT final"
+
+  fluxo-4-fallback-recovery:
+    descricao: Uso de recovery code quando TOTP indisponível (HU-AUTH-09, HU-AUTH-10)
+    passos:
+      1: "Usuário não consegue gerar código TOTP (dispositivo perdido/formatado)"
+      2: "Utiliza um dos 10 recovery codes em POST /auth/2fa/recovery/use"
+      3: "API valida e marca o código como usado (não reutilizável)"
+      4: "JWT final é emitido e acesso é concedido"
+      5: "Recomendado regenerar recovery codes via POST /auth/2fa/recovery/regenerate após login"
+
+servers:
+  - url: http://localhost:3000
+    description: Desenvolvimento local
+  - url: https://api.trustcheck.com.br
+    description: Produção
+
+tags:
+  - name: otp
+    description: Envio e verificação de código OTP por e-mail
+  - name: 2fa-totp
+    description: Enrolamento e verificação TOTP (RFC 6238)
+  - name: 2fa-recovery
+    description: Geração e uso de recovery codes
+  - name: auth-empresa
+    description: Cadastro empresarial e reivindicação de perfil por CNPJ
+  - name: cases
+    description: Gerenciamento de casos (reclamações, denúncias, elógios)
+  - name: legal-terms
+    description: Versionamento de termos legais e aceite vinculado a cada caso (TC1-API-07)
+
+paths:
+
+  # ──────────────────────────────────────────────────────────────
+  # CASOS — M08, M09, M11
+  # ──────────────────────────────────────────────────────────────
+
+  /cases:
+    post:
+      tags: [cases]
+      summary: Abrir novo caso (M08 — consumidor autenticado)
+      description: |
+        Cria caso em status `ENVIADO` com `public_id` no formato `TC-YYYY-NNNNNN` gerado automaticamente por sequence Postgres.
+        **Apenas consumidores** (`role=consumer`) podem abrir casos.
+        Validações:
+        - `occurredAt` não pode ser no futuro.
+        - `description` deve ter entre 50 e 4000 caracteres.
+        - `companyId` deve referenciar uma empresa existente.
+        - `experienceType` e `category` devem ser valores do enum.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenCaseRequest'
+            example:
+              companyId: 550e8400-e29b-41d4-a716-446655440001
+              experienceType: reclamacao
+              legalAcceptance:
+                termId: 550e8400-e29b-41d4-a716-446655440099
+                contentHashEcho: a1b2c3d4e5f6...64hexchars
+              category: ecommerce
+              description: Produto entregue com avaria grave após 15 dias de espera. A empresa ignorou todos os chamados de suporte abertos pelo consumidor.
+              monetaryValue: 349.90
+              occurredAt: "2026-04-10"
+      responses:
+        "201":
+          description: Caso criado com public_id gerado automaticamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseCreatedResponse'
+              example:
+                id: 550e8400-e29b-41d4-a716-446655440099
+                publicId: TC-2026-000001
+                status: ENVIADO
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Empresa não encontrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: COMPANY_NOT_FOUND
+                message: Empresa não encontrada.
+                details: []
+                traceId: abc-300
+        "422":
+          description: Data futura, descrição curta ou enum inválido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                data-futura:
+                  value:
+                    code: CASE_OCCURRED_AT_FUTURE
+                    message: A data do ocorrido não pode ser no futuro.
+                    details: []
+                    traceId: abc-301
+                descricao-curta:
+                  value:
+                    code: CASE_DESCRIPTION_TOO_SHORT
+                    message: A descrição deve ter no mínimo 50 caracteres.
+                    details: [{ field: description, minLength: 50 }]
+                    traceId: abc-302
+
+  /cases/{id}:
+    get:
+      tags: [cases]
+      summary: Consultar caso por UUID interno ou public_id (M09, M11)
+      description: |
+        Aceita UUID interno (v4) **ou** public_id no formato `TC-YYYY-NNNNNN`.
+        Retorna dados públícos do caso. **CNPJ da empresa nunca é exposto**.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: UUID interno ou public_id (TC-YYYY-NNNNNN)
+          schema:
+            type: string
+          examples:
+            uuid:
+              value: 550e8400-e29b-41d4-a716-446655440099
+            publicId:
+              value: TC-2026-000001
+      responses:
+        "200":
+          description: Dados públícos do caso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseDetailResponse'
+              example:
+                id: 550e8400-e29b-41d4-a716-446655440099
+                publicId: TC-2026-000001
+                status: ENVIADO
+                experienceType: reclamacao
+                category: ecommerce
+                description: Produto entregue com avaria grave...
+                monetaryValue: "349.90"
+                occurredAt: "2026-04-10"
+                submittedAt: "2026-04-30T09:00:00Z"
+                publishedAt: null
+                company:
+                  id: 550e8400-e29b-41d4-a716-446655440001
+                  legalName: Acme Tecnologia LTDA
+                  tradeName: Acme Tech
+        "404":
+          description: Caso não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: CASE_NOT_FOUND
+                message: Caso não encontrado.
+                details: []
+                traceId: abc-303
+
+  # ──────────────────────────────────────────────────────────────
+  # TERMOS LEGAIS — TC1-API-07
+  # ──────────────────────────────────────────────────────────────
+
+  /admin/legal-terms:
+    post:
+      tags: [legal-terms]
+      summary: Publicar novo termo legal (admin)
+      description: |
+        Calcula `content_hash = sha256(content)`. Desativa versões anteriores do mesmo `kind`.
+        Somente admin pode publicar. Não é permitido editar — publique nova versão.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublishTermRequest'
+            example:
+              version: "1.0.0"
+              kind: termos_uso
+              content: "Ao utilizar a plataforma TrustCheck você concorda com estes termos..."
+      responses:
+        "201":
+          description: Termo publicado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LegalTermPublishedResponse'
+        "403": {description: Role não autorizado (somente admin)}
+        "409": {description: "LEGAL_TERM_VERSION_EXISTS — versão já existe para este kind"}
+
+  /legal-terms/active:
+    get:
+      tags: [legal-terms]
+      summary: Obter termo ativo por kind (público)
+      parameters:
+        - name: kind
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [denuncia, lgpd, termos_uso]
+      responses:
+        "200":
+          description: Termo legal ativo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LegalTermActiveResponse'
+        "404": {description: "LEGAL_TERM_NOT_FOUND — nenhum termo ativo para o kind"}
+
+  /admin/legal-terms/{version}/acceptances:
+    get:
+      tags: [legal-terms]
+      summary: Listar aceites por versão do termo, paginado (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - {name: version, in: path, required: true, schema: {type: string}, description: "Versão semântica (ex: 1.0.0)"}
+        - {name: from, in: query, required: false, schema: {type: string, format: date-time}, description: "Data inicial ISO 8601"}
+        - {name: to, in: query, required: false, schema: {type: string, format: date-time}, description: "Data final ISO 8601"}
+        - {name: page, in: query, required: false, schema: {type: integer, default: 1}}
+        - {name: limit, in: query, required: false, schema: {type: integer, default: 50, maximum: 100}}
+      responses:
+        "200":
+          description: Lista paginada de aceites
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AcceptanceListItem'
+        "403": {description: Role não autorizado}
+
+  /cases/{id}/audit:
+    get:
+      tags: [cases]
+      summary: Histórico auditável — transições + aceite legal (admin ou dono do caso)
+      security:
+        - bearerAuth: []
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        "200":
+          description: Dados auditáveis do caso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseAuditResponse'
+        "403": {description: Role não autorizado}
+        "404": {description: Caso não encontrado}
+
+  # ──────────────────────────────────────────────────────────────
+  # PIPELINE DE ESTADOS — TC1-API-06
+  # ──────────────────────────────────────────────────────────────
+
+  /cases/{id}/moderation/start:
+    post:
+      tags: [cases]
+      summary: ENVIADO → EM_MODERACAO (admin/system)
+      security:
+        - bearerAuth: []
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        "200": {description: Transição realizada, content: {application/json: {schema: {$ref: '#/components/schemas/TransitionResponse'}}}}
+        "403": {description: Role não autorizado}
+        "404": {description: Caso não encontrado}
+        "409": {description: Transição inválida (CASE_INVALID_TRANSITION) ou conflito (CASE_STATE_CONFLICT)}
+
+  /cases/{id}/moderation/approve:
+    post:
+      tags: [cases]
+      summary: EM_MODERACAO → PUBLICADO (admin, W03)
+      security:
+        - bearerAuth: []
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        "200": {description: Caso publicado, content: {application/json: {schema: {$ref: '#/components/schemas/TransitionResponse'}}}}
+        "403": {description: Role não autorizado}
+        "409": {description: Transição inválida}
+
+  /cases/{id}/moderation/reject:
+    post:
+      tags: [cases]
+      summary: EM_MODERACAO → NAO_RESOLVIDO com motivo (admin)
+      security:
+        - bearerAuth: []
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReasonBody'
+      responses:
+        "200": {description: Caso encerrado, content: {application/json: {schema: {$ref: '#/components/schemas/TransitionResponse'}}}}
+        "403": {description: Role não autorizado}
+        "409": {description: Transição inválida}
+
+  /cases/{id}/notify-company:
+    post:
+      tags: [cases]
+      summary: PUBLICADO → AGUARDANDO_RESPOSTA_EMPRESA (system, chamada interna)
+      description: |
+        Chamada exclusivamente interna. Requer header `X-Internal-Signature`.
+        **Geração**: `HMAC-SHA256(JSON.stringify(body), INTERNAL_HMAC_SECRET)` em hex.
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: X-Internal-Signature, in: header, required: true, schema: {type: string}}
+      responses:
+        "200": {description: Empresa notificada, content: {application/json: {schema: {$ref: '#/components/schemas/TransitionResponse'}}}}
+        "401": {description: Assinatura HMAC inválida ou ausente}
+        "409": {description: Transição inválida}
+
+  /cases/{id}/company/respond:
+    post:
+      tags: [cases]
+      summary: AGUARDANDO_RESPOSTA_EMPRESA → EM_NEGOCIACAO (company)
+      security:
+        - bearerAuth: []
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        "200": {description: Negociação iniciada, content: {application/json: {schema: {$ref: '#/components/schemas/TransitionResponse'}}}}
+        "403": {description: Role não autorizado}
+        "409": {description: Transição inválida}
+
+  /cases/{id}/resolve:
+    post:
+      tags: [cases]
+      summary: EM_NEGOCIACAO → RESOLVIDO (admin/system, consenso das partes)
+      security:
+        - bearerAuth: []
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveBody'
+            example:
+              consumerConfirmed: true
+              companyConfirmed: true
+      responses:
+        "200": {description: Caso resolvido, content: {application/json: {schema: {$ref: '#/components/schemas/TransitionResponse'}}}}
+        "403": {description: Role não autorizado}
+        "409": {description: Transição inválida}
+
+  /cases/{id}/close-unresolved:
+    post:
+      tags: [cases]
+      summary: EM_NEGOCIACAO → NAO_RESOLVIDO com motivo (admin/consumer/system, W07)
+      security:
+        - bearerAuth: []
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReasonBody'
+      responses:
+        "200": {description: Caso encerrado sem resolução, content: {application/json: {schema: {$ref: '#/components/schemas/TransitionResponse'}}}}
+        "403": {description: Role não autorizado}
+        "409": {description: Transição inválida}
+
+  # ──────────────────────────────────────────────────────────────
+  # EMPRESA — Cadastro e Claim
+  # ──────────────────────────────────────────────────────────────
+
+  /auth/company/register:
+    post:
+      tags: [auth-empresa]
+      summary: Cadastro empresarial com CNPJ (E01 — HU-AUTH-07)
+      description: |
+        Cria usuário com `role=company` e perfil empresarial.
+        **Validação de CNPJ:** formato + dígito verificador (Receita Federal) — sem consulta externa.
+        Se o CNPJ já existe e possui titular `active` → 409 `CNPJ_ALREADY_OWNED` com sugestão de usar `/claim`.
+        Após criação, envia OTP ao e-mail. O enrolamento TOTP ocorre em `/register/confirm`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterCompanyRequest'
+            example:
+              email: empresa@acme.com.br
+              password: EmpresaForte@99
+              cnpj: "11.222.333/0001-81"
+              legalName: Acme Tecnologia LTDA
+              tradeName: Acme Tech
+              fullName: João Representante
+              phone: "+5511999990000"
+              lgpdAccepted: true
+              lgpdVersion: "1.0"
+      responses:
+        "201":
+          description: Cadastro iniciado — OTP enviado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationTokenResponse'
+              example:
+                userId: 550e8400-e29b-41d4-a716-446655440010
+                registrationToken: eyJhbGciOiJIUzI1NiJ9...
+        "409":
+          description: E-mail ou CNPJ já registrado com titular ativo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                email-duplicado:
+                  value:
+                    code: EMAIL_ALREADY_REGISTERED
+                    message: Este e-mail já está cadastrado.
+                    details: []
+                    traceId: abc-200
+                cnpj-com-dono:
+                  value:
+                    code: CNPJ_ALREADY_OWNED
+                    message: Este CNPJ já possui um titular ativo. Use o fluxo de reivindicação.
+                    details: [{ sugestao: POST /auth/company/claim }]
+                    traceId: abc-201
+        "422":
+          description: CNPJ inválido ou LGPD não aceita
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                cnpj-invalido:
+                  value:
+                    code: REQUEST_INVALID
+                    message: CNPJ inválido — verifique o número e os dígitos verificadores.
+                    details: [{ field: cnpj, issue: invalid_check_digit }]
+                    traceId: abc-202
+                lgpd:
+                  value:
+                    code: LGPD_NOT_ACCEPTED
+                    message: O aceite dos termos de uso é obrigatório.
+                    details: []
+                    traceId: abc-203
+
+  /auth/company/register/confirm:
+    post:
+      tags: [auth-empresa]
+      summary: Confirmar OTP do cadastro empresa + retorna TOTP enrollment (HU-AUTH-09)
+      description: |
+        Valida OTP, ativa a conta (`status=active`) e retorna o segredo TOTP, QR Code
+        e 10 recovery codes (exibição única — one-shot).
+        O usuário **deve** confirmar o TOTP antes do primeiro login completo.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterConfirmRequest'
+            example:
+              registrationToken: eyJhbGciOiJIUzI1NiJ9...
+              otp: "847291"
+      responses:
+        "200":
+          description: OTP válido — TOTP enrollment retornado (one-shot)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompanyConfirmResponse'
+              example:
+                accessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                totpSecret: JBSWY3DPEHPK3PXP
+                qrCodeDataUrl: "data:image/png;base64,iVBORw0KGgo..."
+                recoveryCodes:
+                  - "1234567890"
+                  - "0987654321"
+        "400":
+          description: OTP inválido/expirado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: OTP_INVALID
+                message: Código OTP inválido.
+                details: []
+                traceId: abc-204
+        "401":
+          description: Token de registro inválido ou expirado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: REQUEST_INVALID
+                message: Token de cadastro inválido ou expirado.
+                details: []
+                traceId: abc-205
+
+  /auth/company/claim:
+    post:
+      tags: [auth-empresa]
+      summary: Reivindicar perfil empresarial existente por CNPJ (E02 — HU-AUTH-08)
+      description: |
+        Cria usuário `pending_otp` + solicitação de claim `pending_review` com documentos.
+        Grava `audit_log` com `action=COMPANY_CLAIM_SUBMITTED`.
+        A análise é feita por admin — status consultável em `GET /auth/company/claim/{claimId}/status`.
+        **Mínimo 1 documento** é obrigatório.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimCompanyRequest'
+            example:
+              cnpj: "11.222.333/0001-81"
+              legalName: Acme Tecnologia LTDA
+              email: novo-rep@acme.com.br
+              password: EmpresaForte@99
+              fullName: Maria Representante
+              documents:
+                - url: https://storage.trustcheck.com.br/docs/contrato.pdf
+                  fileName: contrato.pdf
+                  mimeType: application/pdf
+                  sizeBytes: 204800
+              lgpdAccepted: true
+              lgpdVersion: "1.0"
+      responses:
+        "202":
+          description: Claim registrado para análise
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimResponse'
+              example:
+                claimId: 550e8400-e29b-41d4-a716-446655440020
+                registrationToken: eyJhbGciOiJIUzI1NiJ9...
+        "409":
+          description: E-mail já cadastrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: EMAIL_ALREADY_REGISTERED
+                message: Este e-mail já está cadastrado.
+                details: []
+                traceId: abc-206
+        "422":
+          description: CNPJ inválido, sem documentos ou LGPD não aceita
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                sem-documentos:
+                  value:
+                    code: CLAIM_DOCUMENTS_REQUIRED
+                    message: Pelo menos 1 documento comprobatório é obrigatório.
+                    details: []
+                    traceId: abc-207
+                cnpj-invalido:
+                  value:
+                    code: REQUEST_INVALID
+                    message: CNPJ inválido — verifique o número e os dígitos verificadores.
+                    details: [{ field: cnpj, issue: invalid_check_digit }]
+                    traceId: abc-208
+
+  /auth/company/claim/{claimId}/status:
+    get:
+      tags: [auth-empresa]
+      summary: Consultar status de reivindicação (requerente autenticado)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: claimId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Status do claim retornado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimStatusResponse'
+              example:
+                claimId: 550e8400-e29b-41d4-a716-446655440020
+                status: pending_review
+                submittedAt: "2026-04-30T09:00:00Z"
+                reviewedAt: null
+                rejectionReason: null
+        "401":
+          description: Não autorizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Claim não encontrado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: CLAIM_NOT_FOUND
+                message: Solicitação de reivindicação não encontrada.
+                details: []
+                traceId: abc-209
+
+  # ──────────────────────────────────────────────────────────────
+  # OTP
+  # ──────────────────────────────────────────────────────────────
+
+  /auth/otp/send:
+    post:
+      tags: [otp]
+      summary: Enviar código OTP por e-mail
+      description: |
+        Gera um código OTP de 6 dígitos numéricos e o envia ao destinatário via canal de e-mail.
+        **Regras de rate-limit:**
+        - Máximo de 3 envios por hora por destinatário. Excedido → 429 com código `OTP_RATE_LIMIT_HOURLY`.
+        - Após bloqueio de 30 min por excesso de envios → 429 com código `OTP_RATE_LIMIT_DESTINATION`.
+        - O código expira em 5 minutos (finalidade `CADASTRO` / `REENVIO`) ou 15 minutos (`RECUPERACAO_SENHA`).
+        - Resposta sempre genérica quando o e-mail não existe (não expõe enumeração de contas).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OtpRequest'
+            examples:
+              cadastro:
+                summary: Envio no cadastro de consumidor
+                value:
+                  email: joao@email.com
+                  finalidade: CADASTRO
+              recuperacao:
+                summary: Envio para recuperação de senha
+                value:
+                  email: joao@email.com
+                  finalidade: RECUPERACAO_SENHA
+      responses:
+        "200":
+          description: Código enviado (ou resposta genérica se e-mail não existir)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OtpResponse'
+              example:
+                mensagem: Se o e-mail estiver cadastrado, você receberá um código em instantes.
+                expiraEm: 300
+        "422":
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: REQUEST_INVALID
+                message: O campo 'finalidade' é obrigatório.
+                details: [{ field: finalidade, issue: required }]
+                traceId: "abc-123"
+        "429":
+          description: Rate limit excedido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                limite-horario:
+                  summary: Máximo de 3 envios/hora excedido
+                  value:
+                    code: OTP_RATE_LIMIT_HOURLY
+                    message: Limite de envios por hora excedido. Tente novamente em 47 minutos.
+                    details: [{ retryAfterSeconds: 2820 }]
+                    traceId: "abc-124"
+                destino-bloqueado:
+                  summary: Destinatário bloqueado por 30 min
+                  value:
+                    code: OTP_RATE_LIMIT_DESTINATION
+                    message: Destinatário bloqueado temporariamente por excesso de tentativas.
+                    details: [{ retryAfterSeconds: 1800 }]
+                    traceId: "abc-125"
+
+  /auth/otp/verify:
+    post:
+      tags: [otp]
+      summary: Verificar código OTP
+      description: |
+        Valida o código OTP informado pelo usuário.
+        **Regras:**
+        - Máximo de 5 tentativas por código. Na quinta falha → código invalidado + 429 `OTP_MAX_ATTEMPTS`.
+        - Código expirado (> TTL) → 401 `OTP_EXPIRED`.
+        - Código já utilizado → 401 `OTP_INVALID`.
+        - Após validação bem-sucedida o código é invalidado (uso único).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OtpVerifyRequest'
+            examples:
+              verificacao-cadastro:
+                summary: Verificação de cadastro
+                value:
+                  email: joao@email.com
+                  codigo: "847291"
+                  finalidade: CADASTRO
+              recuperacao-senha:
+                summary: Verificação + nova senha
+                value:
+                  email: joao@email.com
+                  codigo: "391047"
+                  finalidade: RECUPERACAO_SENHA
+                  novaSenha: "NovaSenha@456"
+      responses:
+        "200":
+          description: OTP válido — tokens emitidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokensResponse'
+              example:
+                accessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                refreshToken: 550e8400-e29b-41d4-a716-446655440000
+                perfil: CONSUMIDOR
+        "400":
+          description: Requisição inválida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: REQUEST_INVALID
+                message: O código deve conter exatamente 6 dígitos numéricos.
+                details: [{ field: codigo, issue: format }]
+                traceId: "abc-126"
+        "401":
+          description: OTP inválido ou expirado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                expirado:
+                  summary: Código expirado
+                  value:
+                    code: OTP_EXPIRED
+                    message: O código OTP expirou. Solicite um novo código.
+                    details: []
+                    traceId: "abc-127"
+                invalido:
+                  summary: Código incorreto
+                  value:
+                    code: OTP_INVALID
+                    message: Código OTP inválido.
+                    details: []
+                    traceId: "abc-128"
+        "422":
+          description: Dados inválidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: REQUEST_INVALID
+                message: O campo 'novaSenha' é obrigatório para finalidade RECUPERACAO_SENHA.
+                details: [{ field: novaSenha, issue: required_for_finalidade }]
+                traceId: "abc-129"
+        "429":
+          description: Máximo de tentativas excedido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: OTP_MAX_ATTEMPTS
+                message: Número máximo de tentativas excedido. O código foi invalidado. Solicite um novo.
+                details: [{ invalidatedAt: "2026-04-30T12:00:00Z" }]
+                traceId: "abc-130"
+
+  # ──────────────────────────────────────────────────────────────
+  # 2FA — TOTP
+  # ──────────────────────────────────────────────────────────────
+
+  /auth/2fa/totp/enroll:
+    post:
+      tags: [2fa-totp]
+      summary: Iniciar enrolamento TOTP — gera segredo e QR Code
+      description: |
+        Gera um segredo TOTP de 160 bits codificado em base32 e retorna o QR Code
+        para configuração no autenticador (Google Authenticator, Authy etc.).
+        Também gera 10 recovery codes de 10 dígitos numéricos (uso único).
+        **O segredo e os recovery codes são exibidos apenas neste momento — não recuperáveis depois.**
+        Requer JWT válido. Perfis `EMPRESA` e `ADMIN` são obrigados a completar o enrolamento.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TotpEnrollRequest'
+            example:
+              confirmarEnrolamento: true
+      responses:
+        "201":
+          description: Segredo e QR Code gerados — exibir recovery codes ao usuário
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TotpEnrollResponse'
+              example:
+                segredo: JBSWY3DPEHPK3PXP
+                qrCodeUrl: "data:image/png;base64,iVBORw0KGgo..."
+                otpauthUri: "otpauth://totp/TrustCheck:joao%40email.com?secret=JBSWY3DPEHPK3PXP&issuer=TrustCheck"
+                recoveryCodes:
+                  - "1234567890"
+                  - "0987654321"
+                  - "1122334455"
+                  - "5544332211"
+                  - "9988776655"
+                  - "5566778899"
+                  - "1357924680"
+                  - "0246813579"
+                  - "1928374650"
+                  - "0564738291"
+                avisoUnicoExibicao: true
+        "401":
+          description: Não autenticado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: REQUEST_INVALID
+                message: Token de autenticação ausente ou inválido.
+                details: []
+                traceId: "abc-131"
+        "409":
+          description: 2FA já ativo para este usuário
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: REQUEST_INVALID
+                message: O 2FA já está ativo para esta conta. Use POST /auth/2fa/recovery/regenerate para novos recovery codes.
+                details: []
+                traceId: "abc-132"
+
+  /auth/2fa/totp/verify:
+    post:
+      tags: [2fa-totp]
+      summary: Verificar código TOTP e obter JWT final
+      description: |
+        Valida o código TOTP gerado pelo autenticador (RFC 6238, janela de 30s).
+        **Regras:**
+        - Drift tolerado: ±1 janela (±30s) para cobrir dessincronismo de relógio.
+        - Replay attack: código já utilizado na mesma janela → 401 `TOTP_REPLAY`.
+        - Após validação bem-sucedida emite access token + refresh token definitivos.
+        - Requer `tokenTemporario` emitido no login (pré-2FA).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TotpVerifyRequest'
+            examples:
+              codigo-valido:
+                summary: Código TOTP válido
+                value:
+                  tokenTemporario: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLWlkIiwidGVtcCI6dHJ1ZX0...
+                  codigo: "123456"
+              codigo-drift:
+                summary: Código com drift de +1 janela (ainda válido)
+                value:
+                  tokenTemporario: eyJhbGciOiJIUzI1NiJ9...
+                  codigo: "654321"
+      responses:
+        "200":
+          description: TOTP válido — tokens definitivos emitidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokensResponse'
+              example:
+                accessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                refreshToken: 550e8400-e29b-41d4-a716-446655440001
+                perfil: EMPRESA
+        "400":
+          description: Requisição inválida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: REQUEST_INVALID
+                message: O campo 'tokenTemporario' é obrigatório.
+                details: [{ field: tokenTemporario, issue: required }]
+                traceId: "abc-133"
+        "401":
+          description: TOTP inválido, replay ou drift fora da janela
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalido:
+                  summary: Código incorreto
+                  value:
+                    code: TOTP_INVALID
+                    message: Código 2FA inválido. Verifique o horário do dispositivo e tente novamente.
+                    details: []
+                    traceId: "abc-134"
+                replay:
+                  summary: Código já utilizado nesta janela
+                  value:
+                    code: TOTP_REPLAY
+                    message: Este código já foi utilizado. Aguarde o próximo ciclo de 30 segundos.
+                    details: []
+                    traceId: "abc-135"
+                drift:
+                  summary: Drift fora da tolerância (>±1 janela)
+                  value:
+                    code: TOTP_DRIFT_OUT_OF_RANGE
+                    message: Código fora da janela de tempo. Sincronize o relógio do dispositivo.
+                    details: [{ driftDetectadoSegundos: 95 }]
+                    traceId: "abc-136"
+        "429":
+          description: Conta bloqueada por excesso de tentativas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: ACCOUNT_LOCKED
+                message: Conta bloqueada por excesso de tentativas. Tente novamente em 30 minutos.
+                details: [{ bloqueadaAte: "2026-04-30T12:30:00Z" }]
+                traceId: "abc-137"
+
+  # ──────────────────────────────────────────────────────────────
+  # 2FA — RECOVERY CODES
+  # ──────────────────────────────────────────────────────────────
+
+  /auth/2fa/recovery/regenerate:
+    post:
+      tags: [2fa-recovery]
+      summary: Regenerar recovery codes
+      description: |
+        Invalida todos os recovery codes existentes e gera 10 novos.
+        Deve ser chamado após o uso de um recovery code ou quando o usuário
+        suspeita de comprometimento dos códigos.
+        Requer JWT válido e confirmação da senha atual.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegenerateRecoveryRequest'
+            example:
+              senhaAtual: MinhaSenh@123
+      responses:
+        "200":
+          description: Novos recovery codes gerados
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryCodesResponse'
+              example:
+                recoveryCodes:
+                  - "2837465019"
+                  - "1029384756"
+                  - "5647382910"
+                  - "9102837465"
+                  - "3748291056"
+                  - "6510293847"
+                  - "0182736495"
+                  - "4956102837"
+                  - "7364819205"
+                  - "8201937465"
+                geradosEm: "2026-04-30T09:15:00Z"
+                avisoUnicoExibicao: true
+        "401":
+          description: Senha incorreta ou token inválido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: REQUEST_INVALID
+                message: Senha atual incorreta.
+                details: []
+                traceId: "abc-138"
+        "429":
+          description: Conta bloqueada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: ACCOUNT_LOCKED
+                message: Conta bloqueada por excesso de tentativas. Tente novamente em 30 minutos.
+                details: [{ bloqueadaAte: "2026-04-30T09:45:00Z" }]
+                traceId: "abc-139"
+
+  /auth/2fa/recovery/use:
+    post:
+      tags: [2fa-recovery]
+      summary: Usar recovery code como fallback do TOTP
+      description: |
+        Permite autenticação quando o dispositivo TOTP não está disponível.
+        Cada recovery code tem 10 dígitos numéricos e é de uso único.
+        Após uso o código é marcado como `usado` e não pode ser reutilizado.
+        Recomenda-se regenerar os recovery codes após este fluxo.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryUseRequest'
+            example:
+              tokenTemporario: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLWlkIiwidGVtcCI6dHJ1ZX0...
+              recoveryCode: "1234567890"
+      responses:
+        "200":
+          description: Recovery code válido — tokens definitivos emitidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokensResponse'
+              example:
+                accessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                refreshToken: 550e8400-e29b-41d4-a716-446655440002
+                perfil: ADMIN
+                aviso: Você utilizou um recovery code. Recomendamos regenerar seus códigos de recuperação.
+        "400":
+          description: Formato inválido
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: REQUEST_INVALID
+                message: O recovery code deve conter exatamente 10 dígitos numéricos.
+                details: [{ field: recoveryCode, issue: format }]
+                traceId: "abc-140"
+        "401":
+          description: Recovery code inválido ou já utilizado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalido:
+                  summary: Código não encontrado
+                  value:
+                    code: RECOVERY_CODE_INVALID
+                    message: Recovery code inválido.
+                    details: []
+                    traceId: "abc-141"
+                ja-usado:
+                  summary: Código já utilizado anteriormente
+                  value:
+                    code: RECOVERY_CODE_USED
+                    message: Este recovery code já foi utilizado e não pode ser reutilizado.
+                    details: [{ usadoEm: "2026-04-29T10:00:00Z" }]
+                    traceId: "abc-142"
+        "429":
+          description: Conta bloqueada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: ACCOUNT_LOCKED
+                message: Conta bloqueada por excesso de tentativas. Tente novamente em 30 minutos.
+                details: [{ bloqueadaAte: "2026-04-30T09:45:00Z" }]
+                traceId: "abc-143"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+
+    # ── OTP ────────────────────────────────────────────────────────
+
+    OtpRequest:
+      type: object
+      required: [email, finalidade]
+      properties:
+        email:
+          type: string
+          format: email
+          description: Endereço de e-mail do destinatário
+          example: joao@email.com
+        finalidade:
+          type: string
+          enum: [CADASTRO, RECUPERACAO_SENHA, REENVIO]
+          description: |
+            Define o TTL e o template do e-mail.
+            CADASTRO / REENVIO → TTL 300s.
+            RECUPERACAO_SENHA → TTL 900s.
+
+    OtpVerifyRequest:
+      type: object
+      required: [email, codigo, finalidade]
+      properties:
+        email:
+          type: string
+          format: email
+        codigo:
+          type: string
+          pattern: '^\d{6}$'
+          description: Código OTP de exatamente 6 dígitos numéricos
+          example: "847291"
+        finalidade:
+          type: string
+          enum: [CADASTRO, RECUPERACAO_SENHA, REENVIO]
+        novaSenha:
+          type: string
+          minLength: 10
+          pattern: '^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{10,}$'
+          description: |
+            Obrigatório apenas quando finalidade = RECUPERACAO_SENHA.
+            Mínimo 10 caracteres, ≥1 maiúscula, ≥1 número, ≥1 especial.
+          example: "NovaSenha@456"
+
+    OtpResponse:
+      type: object
+      properties:
+        mensagem:
+          type: string
+          description: Sempre genérica para não expor enumeração de contas
+          example: Se o e-mail estiver cadastrado, você receberá um código em instantes.
+        expiraEm:
+          type: integer
+          description: TTL do código em segundos
+          example: 300
+
+    # ── TOTP ───────────────────────────────────────────────────────
+
+    TotpEnrollRequest:
+      type: object
+      properties:
+        confirmarEnrolamento:
+          type: boolean
+          description: Campo opcional de confirmação de intenção (sem efeito funcional em V1)
+          example: true
+
+    TotpEnrollResponse:
+      type: object
+      required: [segredo, qrCodeUrl, otpauthUri, recoveryCodes, avisoUnicoExibicao]
+      properties:
+        segredo:
+          type: string
+          description: Segredo TOTP em base32 (160 bits). Exibir apenas uma vez.
+          example: JBSWY3DPEHPK3PXP
+        qrCodeUrl:
+          type: string
+          description: Data URL da imagem QR Code (PNG base64) para leitura pelo autenticador
+          example: "data:image/png;base64,iVBORw0KGgo..."
+        otpauthUri:
+          type: string
+          description: URI otpauth completo para configuração manual
+          example: "otpauth://totp/TrustCheck:joao%40email.com?secret=JBSWY3DPEHPK3PXP&issuer=TrustCheck"
+        recoveryCodes:
+          type: array
+          description: 10 recovery codes de 10 dígitos numéricos — uso único, exibir apenas uma vez
+          minItems: 10
+          maxItems: 10
+          items:
+            type: string
+            pattern: '^\d{10}$'
+        avisoUnicoExibicao:
+          type: boolean
+          description: Indica que segredo e recovery codes não serão exibidos novamente
+          example: true
+
+    TotpVerifyRequest:
+      type: object
+      required: [tokenTemporario, codigo]
+      properties:
+        tokenTemporario:
+          type: string
+          description: JWT temporário (pré-2FA) emitido no endpoint POST /auth/login
+          example: eyJhbGciOiJIUzI1NiJ9...
+        codigo:
+          type: string
+          pattern: '^\d{6}$'
+          description: Código TOTP de 6 dígitos gerado pelo autenticador
+          example: "123456"
+
+    # ── Recovery Codes ──────────────────────────────────────────────
+
+    RegenerateRecoveryRequest:
+      type: object
+      required: [senhaAtual]
+      properties:
+        senhaAtual:
+          type: string
+          description: Senha atual do usuário para confirmar identidade
+          example: MinhaSenh@123
+
+    RecoveryCodesResponse:
+      type: object
+      required: [recoveryCodes, geradosEm, avisoUnicoExibicao]
+      properties:
+        recoveryCodes:
+          type: array
+          minItems: 10
+          maxItems: 10
+          items:
+            type: string
+            pattern: '^\d{10}$'
+          description: 10 novos recovery codes — os anteriores foram invalidados
+        geradosEm:
+          type: string
+          format: date-time
+          description: Timestamp de geração dos novos códigos
+        avisoUnicoExibicao:
+          type: boolean
+          example: true
+
+    RecoveryUseRequest:
+      type: object
+      required: [tokenTemporario, recoveryCode]
+      properties:
+        tokenTemporario:
+          type: string
+          description: JWT temporário (pré-2FA) emitido no endpoint POST /auth/login
+        recoveryCode:
+          type: string
+          pattern: '^\d{10}$'
+          description: Recovery code de 10 dígitos numéricos
+          example: "1234567890"
+
+    # ── Tokens ─────────────────────────────────────────────────────
+
+    TokensResponse:
+      type: object
+      required: [accessToken, refreshToken, perfil]
+      properties:
+        accessToken:
+          type: string
+          description: JWT de acesso (1h para ADMIN, 1d para outros perfis)
+        refreshToken:
+          type: string
+          format: uuid
+          description: Token de renovação (7 dias, rotativo, uso único)
+        perfil:
+          type: string
+          enum: [CONSUMIDOR, EMPRESA, ADMIN]
+        aviso:
+          type: string
+          nullable: true
+          description: Mensagem opcional (ex. recomendação de regenerar recovery codes)
+
+    # ── Erro ───────────────────────────────────────────────────────
+
+    ErrorResponse:
+      type: object
+      required: [code, message, traceId]
+      properties:
+        code:
+          type: string
+          enum:
+            - OTP_EXPIRED
+            - OTP_INVALID
+            - OTP_RATE_LIMIT_DESTINATION
+            - OTP_RATE_LIMIT_HOURLY
+            - OTP_MAX_ATTEMPTS
+            - TOTP_INVALID
+            - TOTP_REPLAY
+            - TOTP_DRIFT_OUT_OF_RANGE
+            - RECOVERY_CODE_INVALID
+            - RECOVERY_CODE_USED
+            - ACCOUNT_LOCKED
+            - REQUEST_INVALID
+          description: Código de erro tipado para tratamento programático pelo cliente
+        message:
+          type: string
+          description: Mensagem legível em português
+          example: Código OTP expirado. Solicite um novo código.
+        details:
+          type: array
+          description: Detalhes adicionais (campo com erro, tempo de retry etc.)
+          items:
+            type: object
+            additionalProperties: true
+          default: []
+        traceId:
+          type: string
+          description: Identificador da requisição para rastreamento em logs
+          example: "550e8400-e29b-41d4-a716-446655440000"
+
+    # ── Termos Legais (TC1-API-07) ─────────────────────────────────────────────
+
+    PublishTermRequest:
+      type: object
+      required: [version, kind, content]
+      properties:
+        version:
+          type: string
+          description: "Versão semântica (ex: 1.0.0, 1.1.0)"
+          example: "1.0.0"
+        kind:
+          type: string
+          enum: [denuncia, lgpd, termos_uso]
+        content:
+          type: string
+          minLength: 10
+          description: Conteúdo completo do termo em texto puro
+
+    LegalTermPublishedResponse:
+      type: object
+      required: [id, version, kind, contentHash, publishedAt, active]
+      properties:
+        id:
+          type: string
+          format: uuid
+        version:
+          type: string
+        kind:
+          type: string
+          enum: [denuncia, lgpd, termos_uso]
+        contentHash:
+          type: string
+          description: SHA-256 hex do conteúdo (64 chars)
+        publishedAt:
+          type: string
+          format: date-time
+        active:
+          type: boolean
+
+    LegalTermActiveResponse:
+      type: object
+      required: [id, version, kind, content, contentHash, publishedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        version:
+          type: string
+        kind:
+          type: string
+          enum: [denuncia, lgpd, termos_uso]
+        content:
+          type: string
+        contentHash:
+          type: string
+          description: SHA-256 hex (64 chars) — usar como contentHashEcho no aceite
+        publishedAt:
+          type: string
+          format: date-time
+
+    LegalAcceptanceEmbedded:
+      type: object
+      required: [termId, contentHashEcho]
+      properties:
+        termId:
+          type: string
+          format: uuid
+          description: ID do termo obtido de GET /legal-terms/active
+        contentHashEcho:
+          type: string
+          description: SHA-256 hex do conteúdo (anti-replay — deve coincidir com legal_terms_v2.content_hash)
+
+    AcceptanceListItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        caseId:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+        termVersion:
+          type: string
+        contentHash:
+          type: string
+        acceptedAt:
+          type: string
+          format: date-time
+        ip:
+          type: string
+
+    CaseAuditResponse:
+      type: object
+      properties:
+        case:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            status:
+              type: string
+              enum: [ENVIADO, EM_MODERACAO, PUBLICADO, AGUARDANDO_RESPOSTA_EMPRESA, EM_NEGOCIACAO, RESOLVIDO, NAO_RESOLVIDO]
+        termAcceptance:
+          nullable: true
+          type: object
+          properties:
+            termVersion:
+              type: string
+            contentHash:
+              type: string
+            acceptedAt:
+              type: string
+              format: date-time
+            ip:
+              type: string
+
+    # ── State Machine ──────────────────────────────────────────────────────────
+
+    TransitionResponse:
+      type: object
+      required: [caseId, fromStatus, toStatus, transitionId]
+      properties:
+        caseId:
+          type: string
+          format: uuid
+        fromStatus:
+          type: string
+          enum: [ENVIADO, EM_MODERACAO, PUBLICADO, AGUARDANDO_RESPOSTA_EMPRESA, EM_NEGOCIACAO, RESOLVIDO, NAO_RESOLVIDO]
+        toStatus:
+          type: string
+          enum: [ENVIADO, EM_MODERACAO, PUBLICADO, AGUARDANDO_RESPOSTA_EMPRESA, EM_NEGOCIACAO, RESOLVIDO, NAO_RESOLVIDO]
+        transitionId:
+          type: string
+          format: uuid
+
+    ReasonBody:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          description: Motivo do encerramento/rejeição
+
+    ResolveBody:
+      type: object
+      required: [consumerConfirmed, companyConfirmed]
+      properties:
+        consumerConfirmed:
+          type: boolean
+          enum: [true]
+        companyConfirmed:
+          type: boolean
+          enum: [true]
+
+    # ── Casos ──────────────────────────────────────────────────────────────────
+
+    OpenCaseRequest:
+      type: object
+      required: [companyId, experienceType, category, description, occurredAt, legalAcceptance]
+      properties:
+        companyId:
+          type: string
+          format: uuid
+          description: ID da empresa alvo do caso
+        experienceType:
+          type: string
+          enum: [reclamacao, denuncia, elogio, duvida_resolvida]
+        category:
+          type: string
+          enum: [imoveis, servicos, ecommerce, financeiro, saude, educacao, outro]
+        description:
+          type: string
+          minLength: 50
+          maxLength: 4000
+        monetaryValue:
+          type: number
+          format: double
+          minimum: 0
+          nullable: true
+          description: Valor monetário envolvido (opcional)
+        occurredAt:
+          type: string
+          format: date
+          description: Data do ocorrido — não pode ser no futuro (YYYY-MM-DD)
+        legalAcceptance:
+          $ref: '#/components/schemas/LegalAcceptanceEmbedded'
+
+    CaseCreatedResponse:
+      type: object
+      required: [id, publicId, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        publicId:
+          type: string
+          pattern: '^TC-\d{4}-\d{6}$'
+          example: TC-2026-000001
+        status:
+          type: string
+          enum: [ENVIADO, EM_MODERACAO, PUBLICADO, AGUARDANDO_RESPOSTA_EMPRESA, EM_NEGOCIACAO, RESOLVIDO, NAO_RESOLVIDO]
+
+    CaseCompanyPublic:
+      type: object
+      description: Dados públicos da empresa (CNPJ nunca exposto)
+      properties:
+        id:
+          type: string
+          format: uuid
+        legalName:
+          type: string
+        tradeName:
+          type: string
+          nullable: true
+
+    CaseDetailResponse:
+      type: object
+      required: [id, publicId, status, experienceType, category, description, occurredAt, submittedAt, company]
+      properties:
+        id:
+          type: string
+          format: uuid
+        publicId:
+          type: string
+          pattern: '^TC-\d{4}-\d{6}$'
+        status:
+          type: string
+          enum: [ENVIADO, EM_MODERACAO, PUBLICADO, AGUARDANDO_RESPOSTA_EMPRESA, EM_NEGOCIACAO, RESOLVIDO, NAO_RESOLVIDO]
+        experienceType:
+          type: string
+          enum: [reclamacao, denuncia, elogio, duvida_resolvida]
+        category:
+          type: string
+          enum: [imoveis, servicos, ecommerce, financeiro, saude, educacao, outro]
+        description:
+          type: string
+        monetaryValue:
+          type: string
+          nullable: true
+          description: Decimal serializado como string para evitar perda de precisão
+        occurredAt:
+          type: string
+          format: date
+        submittedAt:
+          type: string
+          format: date-time
+        publishedAt:
+          type: string
+          format: date-time
+          nullable: true
+        company:
+          $ref: '#/components/schemas/CaseCompanyPublic'
+
+    # ── Empresa ────────────────────────────────────────────────────────────────
+
+    RegisterCompanyRequest:
+      type: object
+      required: [email, password, cnpj, legalName, fullName, lgpdAccepted, lgpdVersion]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 10
+          pattern: '^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{10,}$'
+        cnpj:
+          type: string
+          description: CNPJ formatado ou somente dígitos — validado por dígito verificador
+          example: "11.222.333/0001-81"
+        legalName:
+          type: string
+          description: Razão social
+        tradeName:
+          type: string
+          nullable: true
+          description: Nome fantasia
+        fullName:
+          type: string
+          description: Nome do responsável pelo cadastro
+        phone:
+          type: string
+          nullable: true
+        lgpdAccepted:
+          type: boolean
+          enum: [true]
+        lgpdVersion:
+          type: string
+
+    DocumentMeta:
+      type: object
+      required: [url, fileName, mimeType, sizeBytes]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: URL do documento já hospedado no storage
+        fileName:
+          type: string
+        mimeType:
+          type: string
+          example: application/pdf
+        sizeBytes:
+          type: integer
+          minimum: 1
+
+    ClaimCompanyRequest:
+      type: object
+      required: [cnpj, legalName, email, password, fullName, documents, lgpdAccepted, lgpdVersion]
+      properties:
+        cnpj:
+          type: string
+          example: "11.222.333/0001-81"
+        legalName:
+          type: string
+        tradeName:
+          type: string
+          nullable: true
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 10
+        fullName:
+          type: string
+        phone:
+          type: string
+          nullable: true
+        documents:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/DocumentMeta'
+          description: Mínimo 1 documento comprobatório
+        lgpdAccepted:
+          type: boolean
+          enum: [true]
+        lgpdVersion:
+          type: string
+
+    RegisterConfirmRequest:
+      type: object
+      required: [registrationToken, otp]
+      properties:
+        registrationToken:
+          type: string
+          description: JWT de registro emitido em /register
+        otp:
+          type: string
+          pattern: '^\d{6}$'
+
+    RegistrationTokenResponse:
+      type: object
+      required: [userId, registrationToken]
+      properties:
+        userId:
+          type: string
+          format: uuid
+        registrationToken:
+          type: string
+          description: JWT curto (10 min, scope=otp_pending)
+
+    CompanyConfirmResponse:
+      type: object
+      required: [accessToken, totpSecret, qrCodeDataUrl, recoveryCodes]
+      properties:
+        accessToken:
+          type: string
+          description: JWT temporário (scope=totp_pending) para confirmar TOTP
+        totpSecret:
+          type: string
+          description: Segredo TOTP em base32 (160 bits) — exibir apenas uma vez
+        qrCodeDataUrl:
+          type: string
+          description: Data URL da imagem QR Code (PNG base64)
+        recoveryCodes:
+          type: array
+          minItems: 10
+          maxItems: 10
+          items:
+            type: string
+            pattern: '^\d{10}$'
+          description: 10 recovery codes de uso único — exibir apenas uma vez
+
+    ClaimResponse:
+      type: object
+      required: [claimId, registrationToken]
+      properties:
+        claimId:
+          type: string
+          format: uuid
+        registrationToken:
+          type: string
+          description: JWT de registro para confirmar OTP
+
+    ClaimStatusResponse:
+      type: object
+      required: [claimId, status, submittedAt]
+      properties:
+        claimId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending_review, approved, rejected]
+        submittedAt:
+          type: string
+          format: date-time
+        reviewedAt:
+          type: string
+          format: date-time
+          nullable: true
+        rejectionReason:
+          type: string
+          nullable: true
