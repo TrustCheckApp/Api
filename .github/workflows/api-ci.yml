@@ -22,7 +22,7 @@ env:
 
 jobs:
   validate:
-    name: Build, lint, unit, OpenAPI e E2E P0
+    name: Build, lint, unit, SDK, OpenAPI e E2E P0
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -70,7 +70,7 @@ jobs:
       - name: Apply migrations
         run: npm run prisma:migrate:deploy
 
-      - name: Build
+      - name: Build API
         run: npm run build
 
       - name: Lint check
@@ -82,10 +82,16 @@ jobs:
       - name: OpenAPI parse check
         run: npm run openapi:check
 
+      - name: Generate SDK TypeScript
+        run: npm run sdk:generate
+
+      - name: Build SDK TypeScript
+        run: npm run sdk:build
+
       - name: E2E P0 tests
         run: npm run test:e2e:p0
 
-      - name: Upload coverage artifact
+      - name: Upload CI artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -93,5 +99,6 @@ jobs:
           path: |
             coverage/
             /tmp/trustcheck-openapi-check/
+            packages/sdk-ts/dist/
           if-no-files-found: ignore
           retention-days: 7

@@ -5,10 +5,14 @@
   "private": true,
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "generate": "openapi-ts --input ../../openapi/openapi.yaml --output ./src --client @hey-api/client-fetch",
-    "build": "tsc",
-    "clean": "rimraf dist src"
+    "build": "tsc -p tsconfig.json",
+    "clean": "rimraf dist src",
+    "check": "npm run generate && npm run build"
   },
   "dependencies": {
     "@hey-api/client-fetch": "^0.2.4"
