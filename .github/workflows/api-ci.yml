@@ -1,0 +1,97 @@
+name: API CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: "20"
+  DATABASE_URL: postgresql://trustcheck:trustcheck@localhost:5432/trustcheck_e2e
+  REDIS_HOST: localhost
+  REDIS_PORT: "6379"
+  JWT_SECRET: e2e-jwt-secret-ci
+  JWT_REFRESH_SECRET: e2e-refresh-secret-ci
+  JWT_EXPIRES_IN: 15m
+  OTP_LENGTH: "6"
+  OTP_EXPIRATION_SECONDS: "300"
+  INTERNAL_HMAC_SECRET: e2e-internal-hmac-secret-ci
+  PORT: "3000"
+
+jobs:
+  validate:
+    name: Build, lint, unit, OpenAPI e E2E P0
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: trustcheck
+          POSTGRES_PASSWORD: trustcheck
+          POSTGRES_DB: trustcheck_e2e
+        ports:
+          - "5432:5432"
+        options: >-
+          --health-cmd "pg_isready -U trustcheck -d trustcheck_e2e"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - "6379:6379"
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      - name: Apply migrations
+        run: npm run prisma:migrate:deploy
+
+      - name: Build
+        run: npm run build
+
+      - name: Lint check
+        run: npm run lint:check
+
+      - name: Unit tests
+        run: npm run test -- --runInBand
+
+      - name: OpenAPI parse check
+        run: npm run openapi:check
+
+      - name: E2E P0 tests
+        run: npm run test:e2e:p0
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-ci-artifacts
+          path: |
+            coverage/
+            /tmp/trustcheck-openapi-check/
+          if-no-files-found: ignore
+          retention-days: 7
