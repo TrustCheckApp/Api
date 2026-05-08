@@ -24,6 +24,9 @@ import { AUTH_LOGIN_SUCCEEDED_V1, LoginSucceededPayload } from '../../common/eve
 const BCRYPT_ROUNDS = 12;
 const REG_TOKEN_TTL = '10m';
 
+type RequestMeta = { ip?: string; userAgent?: string };
+type RegistrationTokenPayload = { sub: string; scope: string; role?: UserRole };
+
 @Injectable()
 export class ConsumerAuthService {
   private readonly logger = new Logger(ConsumerAuthService.name);
@@ -37,9 +40,7 @@ export class ConsumerAuthService {
     private readonly auditService: AuditService,
   ) {}
 
-  // ─── POST /auth/consumer/register ─────────────────────────────────────────
-
-  async register(dto: RegisterConsumerDto): Promise<{ userId: string; registrationToken: string }> {
+  async register(dto: RegisterConsumerDto, meta?: RequestMeta): Promise<{ userId: string; registrationToken: string }> {
     if (!dto.lgpdAccepted) {
       throw new UnprocessableEntityException({
         code: 'LGPD_NOT_ACCEPTED',
@@ -82,24 +83,36 @@ export class ConsumerAuthService {
 
     await this.otpService.generate(user.id, user.email);
 
+    try {
+      await this.auditService.log({
+        actorUserId: user.id,
+        action: AuditAction.CONSUMER_REGISTER_INITIATED,
+        entity: 'user',
+        entityId: user.id,
+        payload: { role: UserRole.consumer, lgpdVersion: dto.lgpdVersion },
+        ip: meta?.ip,
+        userAgent: meta?.userAgent,
+      });
+    } catch (err) {
+      this.logger.error('Falha ao gravar CONSUMER_REGISTER_INITIATED em audit_log — trilha comprometida', String(err));
+    }
+
     const registrationToken = await this.jwt.signAsync(
-      { sub: user.id, scope: 'otp_pending' },
+      { sub: user.id, scope: 'otp_pending', role: UserRole.consumer },
       { expiresIn: REG_TOKEN_TTL, secret: this.config.get<string>('JWT_SECRET') },
     );
 
     return { userId: user.id, registrationToken };
   }
 
-  // ─── POST /auth/consumer/register/confirm ─────────────────────────────────
-
   async confirm(
     dto: RegisterConfirmDto,
-    meta?: { ip?: string; userAgent?: string },
+    meta?: RequestMeta,
   ): Promise<{ accessToken: string; refreshToken: string }> {
-    let payload: { sub: string; scope: string };
+    let payload: RegistrationTokenPayload;
 
     try {
-      payload = await this.jwt.verifyAsync(dto.registrationToken, {
+      payload = await this.jwt.verifyAsync<RegistrationTokenPayload>(dto.registrationToken, {
         secret: this.config.get<string>('JWT_SECRET'),
       });
     } catch {
@@ -109,10 +122,25 @@ export class ConsumerAuthService {
       });
     }
 
-    if (payload.scope !== 'otp_pending') {
+    if (payload.scope !== 'otp_pending' || payload.role !== UserRole.consumer) {
       throw new UnauthorizedException({
         code: 'REQUEST_INVALID',
         message: 'Token de cadastro inválido.',
+      });
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
+    if (!user || user.role !== UserRole.consumer) {
+      throw new UnauthorizedException({
+        code: 'REQUEST_INVALID',
+        message: 'Token de cadastro inválido.',
+      });
+    }
+
+    if (user.status !== UserStatus.pending_otp) {
+      throw new BadRequestException({
+        code: 'OTP_ALREADY_CONFIRMED',
+        message: 'Cadastro já confirmado ou em estado inválido para confirmação.',
       });
     }
 
@@ -126,16 +154,13 @@ export class ConsumerAuthService {
     return this._issueTokens(payload.sub, UserRole.consumer, 'password', meta);
   }
 
-  // ─── POST /auth/consumer/login (senha + OTP) ──────────────────────────────
-  // Nota: fluxo de login recorrente reutiliza confirm(); método abaixo para
-  // compatibilidade futura com endpoint de login direto por senha.
-
   async loginWithPassword(
     email: string,
     password: string,
-    meta?: { ip?: string; userAgent?: string },
+    meta?: RequestMeta,
   ): Promise<{ accessToken: string; refreshToken: string }> {
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const normalizedEmail = email.toLowerCase().trim();
+    const user = await this.prisma.user.findUnique({ where: { email: normalizedEmail } });
 
     if (!user || !(await bcrypt.compare(password, user.passwordHash ?? ''))) {
       await this._auditLoginFailed(null, 'password', 'INVALID_PASSWORD', meta);
@@ -145,23 +170,29 @@ export class ConsumerAuthService {
       });
     }
 
-    if (user.status === UserStatus.suspended || user.status === UserStatus.deleted) {
-      await this._auditLoginFailed(user.id, 'password', 'ACCOUNT_LOCKED', meta);
+    if (user.role !== UserRole.consumer) {
+      await this._auditLoginFailed(user.id, 'password', 'ROLE_NOT_ALLOWED', meta);
       throw new UnauthorizedException({
-        code: 'ACCOUNT_LOCKED',
-        message: 'Conta suspensa. Entre em contato com o suporte.',
+        code: 'REQUEST_INVALID',
+        message: 'Perfil não autorizado para este fluxo de login.',
+      });
+    }
+
+    if (user.status !== UserStatus.active) {
+      await this._auditLoginFailed(user.id, 'password', 'ACCOUNT_NOT_ACTIVE', meta);
+      throw new UnauthorizedException({
+        code: 'ACCOUNT_NOT_ACTIVE',
+        message: 'Conta ainda não confirmada ou indisponível.',
       });
     }
 
     return this._issueTokens(user.id, user.role, 'password', meta);
   }
 
-  // ─── POST /auth/sso/:provider ──────────────────────────────────────────────
-
   async ssoAuth(
     provider: SsoProvider,
     dto: SsoAuthDto,
-    meta?: { ip?: string; userAgent?: string },
+    meta?: RequestMeta,
   ): Promise<{ accessToken: string; refreshToken: string }> {
     if (!dto.lgpdAccepted) {
       throw new UnprocessableEntityException({
@@ -218,16 +249,14 @@ export class ConsumerAuthService {
       });
     }
 
-    return this._issueTokens(user.id, user.role, provider === SsoProvider.google ? 'sso' : 'sso', meta);
+    return this._issueTokens(user.id, user.role, 'sso', meta);
   }
-
-  // ─── Helpers privados ──────────────────────────────────────────────────────
 
   private async _issueTokens(
     userId: string,
     role: UserRole,
     method: LoginSucceededPayload['method'] = 'password',
-    meta?: { ip?: string; userAgent?: string },
+    meta?: RequestMeta,
   ): Promise<{ accessToken: string; refreshToken: string }> {
     const secret = this.config.get<string>('JWT_SECRET');
     const refreshSecret = this.config.get<string>('JWT_REFRESH_SECRET');
@@ -270,7 +299,7 @@ export class ConsumerAuthService {
     userId: string | null,
     method: string,
     reason: string,
-    meta?: { ip?: string; userAgent?: string },
+    meta?: RequestMeta,
   ): Promise<void> {
     try {
       await this.auditService.log({
