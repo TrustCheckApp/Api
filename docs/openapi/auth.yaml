@@ -3,13 +3,13 @@ info:
   title: TrustCheck API - AUTH
   description: |
     Contrato do módulo AUTH alinhado aos controllers implementados na Sprint 01.
-    Este arquivo cobre cadastro consumidor/empresa, confirmação OTP, SSO e claim empresarial.
+    Este arquivo cobre cadastro consumidor/empresa, confirmação OTP, SSO, claim empresarial e revisão administrativa de claim.
 
     Regras de segurança/LGPD:
     - Exemplos não devem conter OTP, access token, refresh token, TOTP secret, recovery code ou secret real.
     - Campos sensíveis retornados em fluxo one-shot são marcados com `x-sensitive: true`.
     - Logs e auditoria devem usar payload sanitizado.
-  version: "1.1.1"
+  version: "1.1.2"
 servers:
   - url: http://localhost:3000
   - url: https://api.trustcheck.com.br
@@ -20,50 +20,6 @@ tags:
   - name: auth-sso
 
 paths:
-  /auth/consumer/register:
-    post:
-      tags: [auth-consumer]
-      summary: Inicia cadastro de consumidor
-      operationId: registerConsumer
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RegisterConsumerRequest'
-      responses:
-        "201":
-          description: Cadastro iniciado e OTP enviado
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RegisterInitResponse'
-        "409":
-          $ref: '#/components/responses/Conflict'
-        "422":
-          $ref: '#/components/responses/UnprocessableEntity'
-  /auth/consumer/register/confirm:
-    post:
-      tags: [auth-consumer]
-      summary: Confirma cadastro do consumidor com OTP
-      operationId: confirmConsumerRegistration
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RegisterConfirmRequest'
-      responses:
-        "200":
-          description: Conta ativada e tokens emitidos
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TokensResponse'
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
   /auth/company/register:
     post:
       tags: [auth-company]
@@ -133,6 +89,62 @@ paths:
           $ref: '#/components/responses/Conflict'
         "422":
           $ref: '#/components/responses/UnprocessableEntity'
+  /auth/company/claim/{claimId}/approve:
+    post:
+      tags: [auth-company]
+      summary: Aprova reivindicação empresarial
+      operationId: approveCompanyClaim
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ClaimId'
+      responses:
+        "200":
+          description: Claim aprovado e trilha auditável registrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimReviewResponse'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
+  /auth/company/claim/{claimId}/reject:
+    post:
+      tags: [auth-company]
+      summary: Rejeita reivindicação empresarial
+      operationId: rejectCompanyClaim
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ClaimId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RejectCompanyClaimRequest'
+      responses:
+        "200":
+          description: Claim rejeitado e trilha auditável registrada
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimReviewResponse'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
   /auth/company/claim/{claimId}/status:
     get:
       tags: [auth-company]
@@ -141,12 +153,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
-        - in: path
-          name: claimId
-          required: true
-          schema:
-            type: string
-            format: uuid
+        - $ref: '#/components/parameters/ClaimId'
       responses:
         "200":
           description: Status atual do claim retornado
@@ -158,50 +165,6 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "404":
           $ref: '#/components/responses/NotFound'
-  /auth/sso/google:
-    post:
-      tags: [auth-sso]
-      summary: Login ou cadastro via token Google
-      operationId: ssoGoogle
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SsoAuthRequest'
-      responses:
-        "200":
-          description: Autenticado via Google e tokens emitidos
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TokensResponse'
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "422":
-          $ref: '#/components/responses/UnprocessableEntity'
-  /auth/sso/apple:
-    post:
-      tags: [auth-sso]
-      summary: Login ou cadastro via token Apple
-      operationId: ssoApple
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SsoAuthRequest'
-      responses:
-        "200":
-          description: Autenticado via Apple e tokens emitidos
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TokensResponse'
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "422":
-          $ref: '#/components/responses/UnprocessableEntity'
 
 components:
   securitySchemes:
@@ -209,6 +172,14 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+  parameters:
+    ClaimId:
+      in: path
+      name: claimId
+      required: true
+      schema:
+        type: string
+        format: uuid
   responses:
     BadRequest:
       description: Requisição inválida
@@ -218,6 +189,12 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
     Unauthorized:
       description: Não autenticado ou token inválido
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Sem permissão para executar a ação
       content:
         application/json:
           schema:
@@ -241,25 +218,6 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
   schemas:
-    RegisterConsumerRequest:
-      type: object
-      required: [email, password, fullName, lgpdAccepted, lgpdVersion]
-      properties:
-        email:
-          type: string
-          format: email
-        password:
-          type: string
-          minLength: 10
-          writeOnly: true
-        fullName:
-          type: string
-        phone:
-          type: string
-        lgpdAccepted:
-          type: boolean
-        lgpdVersion:
-          type: string
     RegisterCompanyRequest:
       type: object
       required: [email, password, cnpj, legalName, fullName, lgpdAccepted, lgpdVersion]
@@ -342,18 +300,6 @@ components:
         sizeBytes:
           type: integer
           minimum: 1
-    SsoAuthRequest:
-      type: object
-      required: [idToken, lgpdAccepted, lgpdVersion]
-      properties:
-        idToken:
-          type: string
-          writeOnly: true
-          x-sensitive: true
-        lgpdAccepted:
-          type: boolean
-        lgpdVersion:
-          type: string
     RegisterInitResponse:
       type: object
       properties:
@@ -363,7 +309,6 @@ components:
         registrationToken:
           type: string
           x-sensitive: true
-          description: Token temporário de confirmação. Não deve ser logado nem usado em exemplos reais.
     ClaimCreatedResponse:
       type: object
       properties:
@@ -373,7 +318,6 @@ components:
         registrationToken:
           type: string
           x-sensitive: true
-          description: Token temporário de confirmação. Não deve ser logado nem usado em exemplos reais.
     ClaimStatusResponse:
       type: object
       properties:
@@ -393,34 +337,44 @@ components:
         rejectionReason:
           type: string
           nullable: true
-    TokensResponse:
+    RejectCompanyClaimRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 3
+          maxLength: 500
+    ClaimReviewResponse:
       type: object
       properties:
-        accessToken:
+        claimId:
           type: string
-          x-sensitive: true
-        refreshToken:
+          format: uuid
+        status:
           type: string
-          x-sensitive: true
+          enum: [approved, rejected]
+        reviewedAt:
+          type: string
+          format: date-time
+        rejectionReason:
+          type: string
+          nullable: true
     CompanyConfirmResponse:
       type: object
       description: Resposta one-shot para configuração obrigatória de 2FA empresarial.
       properties:
         accessToken:
           type: string
-          description: Token temporário com escopo `totp_pending`.
           x-sensitive: true
         totpSecret:
           type: string
-          description: Segredo TOTP exibido apenas no enrolamento inicial. Não logar, não persistir em cliente e não usar em exemplos.
           x-sensitive: true
         qrCodeDataUrl:
           type: string
-          description: QR Code de enrolamento TOTP em data URL. Conteúdo sensível one-shot.
           x-sensitive: true
         recoveryCodes:
           type: array
-          description: Códigos de recuperação one-shot. Não logar e não exibir em exemplos.
           x-sensitive: true
           items:
             type: string

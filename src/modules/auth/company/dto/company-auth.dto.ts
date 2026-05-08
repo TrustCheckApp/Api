@@ -2,6 +2,7 @@ import {
   IsEmail,
   IsString,
   MinLength,
+  MaxLength,
   IsOptional,
   IsBoolean,
   IsNotEmpty,
@@ -134,4 +135,11 @@ export class ClaimCompanyDto {
   @IsString()
   @IsNotEmpty()
   lgpdVersion: string;
+}
+
+export class RejectCompanyClaimDto {
+  @IsString()
+  @MinLength(3, { message: 'Motivo da rejeição deve ter no mínimo 3 caracteres' })
+  @MaxLength(500, { message: 'Motivo da rejeição deve ter no máximo 500 caracteres' })
+  reason: string;
 }

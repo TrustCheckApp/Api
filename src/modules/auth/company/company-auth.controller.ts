@@ -14,9 +14,13 @@ import {
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { Request } from 'express';
 import { CompanyAuthService } from './company-auth.service';
-import { RegisterCompanyDto, ClaimCompanyDto } from './dto/company-auth.dto';
+import { RegisterCompanyDto, ClaimCompanyDto, RejectCompanyClaimDto } from './dto/company-auth.dto';
 import { RegisterConfirmDto } from '../dto/register-consumer.dto';
 import { JwtGuard } from '../../../auth/guards/auth.guard';
+import { RolesGuard } from '../../../common/guards/roles.guard';
+import { Roles } from '../../../common/decorators/roles.decorator';
+
+type AuthRequest = Request & { user?: { id: string; role?: string } };
 
 @ApiTags('auth-empresa')
 @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
@@ -63,6 +67,43 @@ export class CompanyAuthController {
   async claim(@Body() dto: ClaimCompanyDto, @Req() req: Request) {
     const { ip, userAgent } = this.extractMeta(req);
     return this.companyAuthService.claim(dto, ip, userAgent);
+  }
+
+  @Post('claim/:claimId/approve')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Aprovar reivindicação empresarial (admin)' })
+  @ApiResponse({ status: 200, description: 'Claim aprovado com trilha auditável' })
+  @ApiResponse({ status: 401, description: 'Não autenticado' })
+  @ApiResponse({ status: 403, description: 'Somente admin pode revisar claim' })
+  @ApiResponse({ status: 404, description: 'Claim não encontrado' })
+  @ApiResponse({ status: 409, description: 'Claim já revisado' })
+  async approveClaim(@Param('claimId') claimId: string, @Req() req: AuthRequest) {
+    const { ip, userAgent } = this.extractMeta(req);
+    return this.companyAuthService.approveClaim(claimId, req.user?.id ?? '', { ip, userAgent });
+  }
+
+  @Post('claim/:claimId/reject')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Rejeitar reivindicação empresarial (admin)' })
+  @ApiResponse({ status: 200, description: 'Claim rejeitado com trilha auditável' })
+  @ApiResponse({ status: 401, description: 'Não autenticado' })
+  @ApiResponse({ status: 403, description: 'Somente admin pode revisar claim' })
+  @ApiResponse({ status: 404, description: 'Claim não encontrado' })
+  @ApiResponse({ status: 409, description: 'Claim já revisado' })
+  @ApiResponse({ status: 422, description: 'Motivo inválido' })
+  async rejectClaim(
+    @Param('claimId') claimId: string,
+    @Body() dto: RejectCompanyClaimDto,
+    @Req() req: AuthRequest,
+  ) {
+    const { ip, userAgent } = this.extractMeta(req);
+    return this.companyAuthService.rejectClaim(claimId, req.user?.id ?? '', dto, { ip, userAgent });
   }
 
   @Get('claim/:claimId/status')
