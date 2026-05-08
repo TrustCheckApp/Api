@@ -150,10 +150,12 @@ describe('POST /cases (E2E)', () => {
     await app.close();
   });
 
-  it('201 — cria caso e aceite legal de forma atômica', async () => {
+  it('201 — cria caso e aceite legal de forma atômica com IP normalizado', async () => {
     const res = await request(app.getHttpServer())
       .post('/cases')
       .set('Authorization', `Bearer ${consumerToken}`)
+      .set('User-Agent', 'trustcheck-e2e/open-case')
+      .set('X-Forwarded-For', '203.0.113.99')
       .send(validPayload())
       .expect(201);
 
@@ -167,6 +169,9 @@ describe('POST /cases (E2E)', () => {
     const acceptance = await prisma.caseTermAcceptance.findUnique({ where: { caseId: res.body.id } });
     expect(acceptance?.termId).toBe(legalTerm.id);
     expect(acceptance?.contentHash).toBe(legalTerm.contentHash);
+    expect(acceptance?.ip).toBeTruthy();
+    expect(String(acceptance?.ip)).not.toContain('::ffff:');
+    expect(acceptance?.userAgent).toBe('trustcheck-e2e/open-case');
   });
 
   it('401 — sem token de autorização', async () => {
