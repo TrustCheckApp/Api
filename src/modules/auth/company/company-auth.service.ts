@@ -4,6 +4,7 @@ import {
   UnprocessableEntityException,
   NotFoundException,
   UnauthorizedException,
+  BadRequestException,
   Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -22,6 +23,13 @@ const BCRYPT_ROUNDS = 12;
 const REG_TOKEN_TTL = '10m';
 const RECOVERY_COUNT = 10;
 
+type CompanyRegistrationTokenPayload = {
+  sub: string;
+  scope: string;
+  role?: string;
+  claimId?: string;
+};
+
 @Injectable()
 export class CompanyAuthService {
   private readonly logger = new Logger(CompanyAuthService.name);
@@ -33,8 +41,6 @@ export class CompanyAuthService {
     private readonly otpService: OtpService,
     private readonly auditService: AuditService,
   ) {}
-
-  // ─── POST /auth/company/register ──────────────────────────────────────────
 
   async register(
     dto: RegisterCompanyDto,
@@ -109,7 +115,7 @@ export class CompanyAuthService {
 
     await this.auditService.log({
       actorUserId: user.id,
-      action: 'COMPANY_REGISTER_INITIATED',
+      action: AuditAction.COMPANY_REGISTER_INITIATED,
       entity: 'Company',
       entityId: company.id,
       payload: { legalName: dto.legalName },
@@ -118,15 +124,12 @@ export class CompanyAuthService {
     });
 
     const registrationToken = await this.jwt.signAsync(
-      { sub: user.id, scope: 'otp_pending', role: 'company' },
+      { sub: user.id, scope: 'otp_pending', role: UserRole.company },
       { expiresIn: REG_TOKEN_TTL, secret: this.config.get<string>('JWT_SECRET') },
     );
 
     return { userId: user.id, registrationToken };
   }
-
-  // ─── POST /auth/company/register/confirm ──────────────────────────────────
-  // Confirma OTP e retorna TOTP enrollment (QR Code + recovery codes)
 
   async confirmAndEnrollTotp(
     registrationToken: string,
@@ -138,10 +141,10 @@ export class CompanyAuthService {
     qrCodeDataUrl: string;
     recoveryCodes: string[];
   }> {
-    let payload: { sub: string; scope: string; role: string };
+    let payload: CompanyRegistrationTokenPayload;
 
     try {
-      payload = await this.jwt.verifyAsync(registrationToken, {
+      payload = await this.jwt.verifyAsync<CompanyRegistrationTokenPayload>(registrationToken, {
         secret: this.config.get<string>('JWT_SECRET'),
       });
     } catch {
@@ -151,22 +154,37 @@ export class CompanyAuthService {
       });
     }
 
-    if (payload.scope !== 'otp_pending' || payload.role !== 'company') {
+    if (payload.scope !== 'otp_pending' || payload.role !== UserRole.company) {
       throw new UnauthorizedException({
         code: 'REQUEST_INVALID',
         message: 'Token de cadastro inválido.',
       });
     }
 
+    const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
+    if (!user || user.role !== UserRole.company) {
+      throw new UnauthorizedException({
+        code: 'REQUEST_INVALID',
+        message: 'Token de cadastro inválido.',
+      });
+    }
+
+    if (user.status !== UserStatus.pending_otp) {
+      throw new BadRequestException({
+        code: 'OTP_ALREADY_CONFIRMED',
+        message: 'Cadastro já confirmado ou em estado inválido para confirmação.',
+      });
+    }
+
     await this.otpService.verify(payload.sub, otp, 'register');
 
-    const user = await this.prisma.user.update({
+    const updatedUser = await this.prisma.user.update({
       where: { id: payload.sub },
       data: { status: UserStatus.active },
     });
 
     const secret = authenticator.generateSecret(20);
-    const otpauthUri = authenticator.keyuri(user.email, 'TrustCheck', secret);
+    const otpauthUri = authenticator.keyuri(updatedUser.email, 'TrustCheck', secret);
     const qrCodeDataUrl = await QRCode.toDataURL(otpauthUri);
 
     const recoveryCodes = Array.from({ length: RECOVERY_COUNT }, () =>
@@ -176,17 +194,23 @@ export class CompanyAuthService {
     );
 
     const tempToken = await this.jwt.signAsync(
-      { sub: user.id, scope: 'totp_pending', totpSecret: secret, recoveryCodes },
+      {
+        sub: updatedUser.id,
+        role: UserRole.company,
+        scope: 'totp_pending',
+        totpSecret: secret,
+        recoveryCodes,
+      },
       { expiresIn: '30m', secret: this.config.get<string>('JWT_SECRET') },
     );
 
     try {
       await this.auditService.log({
-        actorUserId: user.id,
+        actorUserId: updatedUser.id,
         action: AuditAction.AUTH_LOGIN,
         entity: 'user',
-        entityId: user.id,
-        payload: { method: 'password_totp', role: user.role },
+        entityId: updatedUser.id,
+        payload: { method: 'password_totp', role: updatedUser.role, totpEnrollment: 'started' },
         ip: meta?.ip,
         userAgent: meta?.userAgent,
       });
@@ -201,8 +225,6 @@ export class CompanyAuthService {
       recoveryCodes,
     };
   }
-
-  // ─── POST /auth/company/claim ──────────────────────────────────────────────
 
   async claim(
     dto: ClaimCompanyDto,
@@ -279,7 +301,7 @@ export class CompanyAuthService {
 
     await this.auditService.log({
       actorUserId: user.id,
-      action: 'COMPANY_CLAIM_SUBMITTED',
+      action: AuditAction.COMPANY_CLAIM_SUBMITTED,
       entity: 'CompanyClaim',
       entityId: claim.id,
       payload: {
@@ -292,58 +314,12 @@ export class CompanyAuthService {
     });
 
     const registrationToken = await this.jwt.signAsync(
-      { sub: user.id, scope: 'otp_pending', role: 'company', claimId: claim.id },
+      { sub: user.id, scope: 'otp_pending', role: UserRole.company, claimId: claim.id },
       { expiresIn: REG_TOKEN_TTL, secret: this.config.get<string>('JWT_SECRET') },
     );
 
     return { claimId: claim.id, registrationToken };
   }
-
-  // ─── Helpers privados ──────────────────────────────────────────────────────
-
-  async auditLoginSuccess(
-    userId: string,
-    role: string,
-    method: string,
-    meta?: { ip?: string; userAgent?: string },
-  ): Promise<void> {
-    try {
-      await this.auditService.log({
-        actorUserId: userId,
-        action: AuditAction.AUTH_LOGIN,
-        entity: 'user',
-        entityId: userId,
-        payload: { method, role },
-        ip: meta?.ip,
-        userAgent: meta?.userAgent,
-      });
-    } catch (err) {
-      this.logger.error('Falha ao gravar AUTH_LOGIN em audit_log — trilha comprometida', String(err));
-    }
-  }
-
-  async _auditLoginFailed(
-    userId: string | null,
-    method: string,
-    reason: string,
-    meta?: { ip?: string; userAgent?: string },
-  ): Promise<void> {
-    try {
-      await this.auditService.log({
-        actorUserId: userId ?? undefined,
-        action: AuditAction.AUTH_LOGIN_FAILED,
-        entity: userId ? 'user' : 'auth_attempt',
-        entityId: userId ?? undefined,
-        payload: { method, reason },
-        ip: meta?.ip,
-        userAgent: meta?.userAgent,
-      });
-    } catch (err) {
-      this.logger.error('Falha ao gravar AUTH_LOGIN_FAILED em audit_log', String(err));
-    }
-  }
-
-  // ─── GET /auth/company/claim/:claimId/status ──────────────────────────────
 
   async claimStatus(
     claimId: string,
