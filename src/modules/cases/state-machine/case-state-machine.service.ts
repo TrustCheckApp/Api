@@ -10,6 +10,11 @@ import { CaseStatus, ActorRole, Prisma } from '@prisma/client';
 import { TRANSITIONS, ALLOWED_ACTORS, ActorInfo, TransitionKey } from './transitions';
 import { AuditService } from '../../../common/audit/audit.service';
 import { AuditAction } from '../../../common/audit/audit-actions.const';
+import { buildEvent } from '../../../common/events/domain-event';
+import {
+  CASE_STATUS_CHANGED_V1,
+  CaseStatusChangedPayload,
+} from '../../../common/events/schemas/cases/status-changed';
 
 export interface TransitionOptions {
   reason?: string;
@@ -132,6 +137,17 @@ export class CaseStateMachineService {
       },
       ip: actor.ip,
     });
+
+    const payload: CaseStatusChangedPayload = {
+      caseId,
+      fromStatus: result.fromStatus,
+      toStatus: result.toStatus,
+      actorRole: actor.role,
+      transitionId: result.transitionId,
+      occurredAt: result.occurredAt.toISOString(),
+    };
+
+    this.events.emit(CASE_STATUS_CHANGED_V1, buildEvent(CASE_STATUS_CHANGED_V1, 1, payload));
 
     this.events.emit('case.status.changed', {
       caseId,
