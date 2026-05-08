@@ -4,6 +4,8 @@
  */
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import * as request from 'supertest';
 import { AppModule } from '../../src/app.module';
 import { PrismaService } from '../../src/prisma/prisma.service';
@@ -17,6 +19,8 @@ describe('POST /auth/consumer/register (E2E)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let redis: RedisService;
+  let jwt: JwtService;
+  let config: ConfigService;
   let capturedOtp: string | null = null;
 
   beforeAll(async () => {
@@ -39,6 +43,8 @@ describe('POST /auth/consumer/register (E2E)', () => {
 
     prisma = moduleRef.get(PrismaService);
     redis = moduleRef.get(RedisService);
+    jwt = moduleRef.get(JwtService);
+    config = moduleRef.get(ConfigService);
   });
 
   afterAll(async () => {
@@ -47,8 +53,6 @@ describe('POST /auth/consumer/register (E2E)', () => {
     await prisma.user.deleteMany({ where: { email: { contains: 'trustcheck.test' } } });
     await app.close();
   });
-
-  // ─── Sucesso: registro + confirmação ──────────────────────────────────────
 
   describe('Fluxo completo de cadastro', () => {
     let registrationToken: string;
@@ -68,6 +72,8 @@ describe('POST /auth/consumer/register (E2E)', () => {
 
       expect(res.body).toHaveProperty('userId');
       expect(res.body).toHaveProperty('registrationToken');
+      expect(res.body).not.toHaveProperty('otp');
+      expect(res.body).not.toHaveProperty('password');
       expect(capturedOtp).toMatch(/^\d{6}$/);
 
       registrationToken = res.body.registrationToken;
@@ -82,6 +88,7 @@ describe('POST /auth/consumer/register (E2E)', () => {
 
       expect(res.body).toHaveProperty('accessToken');
       expect(res.body).toHaveProperty('refreshToken');
+      expect(res.body).not.toHaveProperty('otp');
       expect(res.body.accessToken).toBeTruthy();
     });
 
@@ -90,8 +97,6 @@ describe('POST /auth/consumer/register (E2E)', () => {
       expect(user?.status).toBe('active');
     });
   });
-
-  // ─── E-mail duplicado ──────────────────────────────────────────────────────
 
   it('409 EMAIL_ALREADY_REGISTERED — e-mail já cadastrado', async () => {
     const res = await request(app.getHttpServer())
@@ -108,8 +113,6 @@ describe('POST /auth/consumer/register (E2E)', () => {
     expect(res.body.message).toMatchObject({ code: 'EMAIL_ALREADY_REGISTERED' });
   });
 
-  // ─── LGPD não aceita ────────────────────────────────────────────────────────
-
   it('422 LGPD_NOT_ACCEPTED — lgpdAccepted=false', async () => {
     const res = await request(app.getHttpServer())
       .post('/auth/consumer/register')
@@ -124,8 +127,6 @@ describe('POST /auth/consumer/register (E2E)', () => {
 
     expect(res.body.message).toMatchObject({ code: 'LGPD_NOT_ACCEPTED' });
   });
-
-  // ─── OTP inválido ──────────────────────────────────────────────────────────
 
   describe('Confirmação com OTP inválido', () => {
     let regToken: string;
@@ -169,7 +170,30 @@ describe('POST /auth/consumer/register (E2E)', () => {
     });
   });
 
-  // ─── OTP expirado (simulado via Redis) ────────────────────────────────────
+  it('401 REQUEST_INVALID — rejeita token de cadastro que não pertence ao perfil consumidor', async () => {
+    const companyUser = await prisma.user.create({
+      data: {
+        email: `company-token-${Date.now()}@trustcheck.test`,
+        role: 'company',
+        status: 'pending_otp',
+      },
+    });
+
+    const registrationToken = await jwt.signAsync(
+      { sub: companyUser.id, scope: 'otp_pending', role: 'company' },
+      { expiresIn: '10m', secret: config.get<string>('JWT_SECRET') },
+    );
+
+    const res = await request(app.getHttpServer())
+      .post('/auth/consumer/register/confirm')
+      .send({ registrationToken, otp: '123456' })
+      .expect(401);
+
+    expect(res.body.message).toMatchObject({ code: 'REQUEST_INVALID' });
+
+    const persisted = await prisma.user.findUnique({ where: { id: companyUser.id } });
+    expect(persisted?.status).toBe('pending_otp');
+  });
 
   it('400 OTP_EXPIRED — código removido do Redis', async () => {
     capturedOtp = null;
