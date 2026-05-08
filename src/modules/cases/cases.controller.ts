@@ -31,6 +31,7 @@ import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { InternalGuard } from '../../common/guards/internal.guard';
 import { JwtGuard } from '../../auth/guards/auth.guard';
+import { extractClientIp } from '../../common/net/extract-ip.util';
 
 type AuthRequest = Request & { user?: { id: string; role: string } };
 
@@ -56,7 +57,7 @@ export class CasesController {
   @ApiResponse({ status: 401, description: 'Não autenticado' })
   async openCase(@Body() dto: OpenCaseDto, @Req() req: AuthRequest) {
     return this.casesService.openCase(req.user?.id ?? '', dto, {
-      ip: req.ip,
+      ip: extractClientIp(req) ?? undefined,
       userAgent: req.headers['user-agent'],
     });
   }
@@ -105,7 +106,7 @@ export class CasesController {
     return this.stateMachine.transition(id, CaseStatus.EM_MODERACAO, {
       id: req.user?.id,
       role: req.user?.role as ActorRole,
-      ip: req.ip,
+      ip: extractClientIp(req) ?? undefined,
     });
   }
 
@@ -118,7 +119,7 @@ export class CasesController {
     return this.stateMachine.transition(id, CaseStatus.PUBLICADO, {
       id: req.user?.id,
       role: req.user?.role as ActorRole,
-      ip: req.ip,
+      ip: extractClientIp(req) ?? undefined,
     });
   }
 
@@ -131,7 +132,7 @@ export class CasesController {
     return this.stateMachine.transition(
       id,
       CaseStatus.NAO_RESOLVIDO,
-      { id: req.user?.id, role: req.user?.role as ActorRole, ip: req.ip },
+      { id: req.user?.id, role: req.user?.role as ActorRole, ip: extractClientIp(req) ?? undefined },
       { reason: dto.reason },
     );
   }
@@ -143,7 +144,7 @@ export class CasesController {
   async notifyCompany(@Param('id') id: string, @Req() req: AuthRequest) {
     return this.stateMachine.transition(id, CaseStatus.AGUARDANDO_RESPOSTA_EMPRESA, {
       role: ActorRole.system,
-      ip: req.ip,
+      ip: extractClientIp(req) ?? undefined,
     });
   }
 
@@ -156,7 +157,7 @@ export class CasesController {
     return this.stateMachine.transition(id, CaseStatus.EM_NEGOCIACAO, {
       id: req.user?.id,
       role: req.user?.role as ActorRole,
-      ip: req.ip,
+      ip: extractClientIp(req) ?? undefined,
     });
   }
 
@@ -175,7 +176,7 @@ export class CasesController {
     return this.stateMachine.transition(
       id,
       CaseStatus.RESOLVIDO,
-      { id: req.user?.id, role: req.user?.role as ActorRole, ip: req.ip },
+      { id: req.user?.id, role: req.user?.role as ActorRole, ip: extractClientIp(req) ?? undefined },
       { payload: { consumerConfirmed: dto.consumerConfirmed, companyConfirmed: dto.companyConfirmed } },
     );
   }
@@ -189,7 +190,7 @@ export class CasesController {
     return this.stateMachine.transition(
       id,
       CaseStatus.NAO_RESOLVIDO,
-      { id: req.user?.id, role: req.user?.role as ActorRole, ip: req.ip },
+      { id: req.user?.id, role: req.user?.role as ActorRole, ip: extractClientIp(req) ?? undefined },
       { reason: dto.reason },
     );
   }
