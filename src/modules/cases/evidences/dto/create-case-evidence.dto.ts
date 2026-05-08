@@ -3,11 +3,9 @@ import {
   IsOptional,
   IsString,
   Matches,
-  Max,
   MaxLength,
   Min,
 } from 'class-validator';
-import { MAX_EVIDENCE_SIZE_BYTES } from '../case-evidence.constants';
 
 export class CreateCaseEvidenceDto {
   @IsString()
@@ -23,9 +21,6 @@ export class CreateCaseEvidenceDto {
 
   @IsInt()
   @Min(1)
-  @Max(MAX_EVIDENCE_SIZE_BYTES, {
-    message: 'Arquivo excede o tamanho máximo permitido para evidências.',
-  })
   sizeBytes: number;
 
   @IsOptional()
