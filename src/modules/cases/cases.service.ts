@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { CasesRepository } from './cases.repository';
 import { OpenCaseDto } from './dto/open-case.dto';
@@ -82,6 +83,26 @@ export class CasesService {
       throw new NotFoundException({
         code: 'CASE_NOT_FOUND',
         message: 'Caso não encontrado.',
+      });
+    }
+
+    return found;
+  }
+
+  async getCaseAuditAccess(caseId: string, actor?: { id: string; role: string }) {
+    const found = await this.repo.findAuditAccessById(caseId);
+
+    if (!found) {
+      throw new NotFoundException({
+        code: 'CASE_NOT_FOUND',
+        message: 'Caso não encontrado.',
+      });
+    }
+
+    if (actor?.role === 'consumer' && found.consumerUserId !== actor.id) {
+      throw new ForbiddenException({
+        code: 'CASE_AUDIT_FORBIDDEN',
+        message: 'Consumidor não possui acesso à auditoria deste caso.',
       });
     }
 

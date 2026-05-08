@@ -8,6 +8,8 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { CaseStatus, ActorRole, Prisma } from '@prisma/client';
 import { TRANSITIONS, ALLOWED_ACTORS, ActorInfo, TransitionKey } from './transitions';
+import { AuditService } from '../../../common/audit/audit.service';
+import { AuditAction } from '../../../common/audit/audit-actions.const';
 
 export interface TransitionOptions {
   reason?: string;
@@ -19,6 +21,7 @@ export class CaseStateMachineService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly events: EventEmitter2,
+    private readonly auditService: AuditService,
   ) {}
 
   async transition(
@@ -27,9 +30,21 @@ export class CaseStateMachineService {
     actor: ActorInfo,
     opts: TransitionOptions = {},
   ) {
-    return this.prisma.$transaction(async (tx) => {
-      const found = await tx.$queryRaw<{ id: string; status: CaseStatus }[]>`
-        SELECT id, status FROM cases WHERE id = ${caseId}::uuid FOR UPDATE
+    const result = await this.prisma.$transaction(async (tx) => {
+      const found = await tx.$queryRaw<{
+        id: string;
+        status: CaseStatus;
+        consumerUserId: string;
+        companyId: string;
+      }[]>`
+        SELECT
+          id,
+          status,
+          consumer_user_id AS "consumerUserId",
+          company_id AS "companyId"
+        FROM cases
+        WHERE id = ${caseId}::uuid
+        FOR UPDATE
       `;
 
       if (!found.length) {
@@ -66,6 +81,8 @@ export class CaseStateMachineService {
         });
       }
 
+      await this.assertActorCanAccessCase(tx, currentCase, actor, key);
+
       const now = new Date();
       const extraFields: Record<string, unknown> = {};
       if (toStatus === CaseStatus.PUBLICADO) extraFields.publishedAt = now;
@@ -91,21 +108,84 @@ export class CaseStateMachineService {
         },
       });
 
-      this.events.emit('case.status.changed', {
-        caseId,
-        fromStatus,
-        toStatus,
-        actorRole: actor.role,
-        transitionId: transition.id,
-        occurredAt: transition.occurredAt,
-      });
-
       return {
         caseId,
         fromStatus,
         toStatus,
         transitionId: transition.id,
+        occurredAt: transition.occurredAt,
+        actorRole: actor.role,
       };
     });
+
+    await this.auditService.log({
+      actorUserId: actor.id,
+      action: AuditAction.CASE_STATUS_TRANSITION,
+      entity: 'case',
+      entityId: caseId,
+      payload: {
+        fromStatus: result.fromStatus,
+        toStatus: result.toStatus,
+        transitionId: result.transitionId,
+        actorRole: result.actorRole,
+        reason: opts.reason ?? null,
+      },
+      ip: actor.ip,
+    });
+
+    this.events.emit('case.status.changed', {
+      caseId,
+      fromStatus: result.fromStatus,
+      toStatus: result.toStatus,
+      actorRole: actor.role,
+      transitionId: result.transitionId,
+      occurredAt: result.occurredAt,
+    });
+
+    return {
+      caseId: result.caseId,
+      fromStatus: result.fromStatus,
+      toStatus: result.toStatus,
+      transitionId: result.transitionId,
+    };
+  }
+
+  private async assertActorCanAccessCase(
+    tx: Prisma.TransactionClient,
+    currentCase: { consumerUserId: string; companyId: string },
+    actor: ActorInfo,
+    transitionKey: TransitionKey,
+  ): Promise<void> {
+    if (actor.role === ActorRole.admin || actor.role === ActorRole.system) return;
+
+    if (!actor.id) {
+      throw new ForbiddenException({
+        code: 'CASE_ACTOR_REQUIRED',
+        message: `Ator autenticado é obrigatório para a transição ${transitionKey}.`,
+      });
+    }
+
+    if (actor.role === ActorRole.consumer && currentCase.consumerUserId !== actor.id) {
+      throw new ForbiddenException({
+        code: 'CASE_CONSUMER_ACCESS_FORBIDDEN',
+        message: 'Consumidor não possui acesso a este caso.',
+      });
+    }
+
+    if (actor.role === ActorRole.company) {
+      const linkedProfiles = await tx.companyProfile.count({
+        where: {
+          userId: actor.id,
+          companyId: currentCase.companyId,
+        },
+      });
+
+      if (linkedProfiles === 0) {
+        throw new ForbiddenException({
+          code: 'CASE_COMPANY_ACCESS_FORBIDDEN',
+          message: 'Empresa não possui acesso a este caso.',
+        });
+      }
+    }
   }
 }
