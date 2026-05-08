@@ -2,9 +2,15 @@ openapi: 3.0.3
 info:
   title: TrustCheck API - CASOS
   description: |
-    Contrato do modulo CASOS alinhado aos endpoints implementados na Sprint 01.
+    Contrato do módulo CASOS alinhado aos endpoints implementados na Sprint 01.
     Pipeline oficial: ENVIADO -> EM_MODERACAO -> PUBLICADO -> AGUARDANDO_RESPOSTA_EMPRESA -> EM_NEGOCIACAO -> RESOLVIDO | NAO_RESOLVIDO.
-  version: "1.1.0"
+
+    Regras de segurança/LGPD:
+    - `POST /cases` exige aceite legal.
+    - Respostas de caso devem expor o mínimo de dados pessoais.
+    - Auditoria é endpoint sensível e exige autorização.
+    - Transições inválidas retornam erro de regra.
+  version: "1.1.1"
 servers:
   - url: http://localhost:3000
   - url: https://api.trustcheck.com.br
@@ -20,7 +26,10 @@ paths:
   /cases:
     post:
       tags: [cases]
-      summary: Abrir novo caso
+      summary: Abre novo caso
+      operationId: openCase
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -29,7 +38,7 @@ paths:
               $ref: '#/components/schemas/OpenCaseRequest'
       responses:
         "201":
-          description: Caso criado
+          description: Caso criado com publicId gerado
           content:
             application/json:
               schema:
@@ -40,75 +49,83 @@ paths:
           $ref: '#/components/responses/NotFound'
         "422":
           $ref: '#/components/responses/UnprocessableEntity'
-
   /cases/{id}:
     get:
       tags: [cases]
-      summary: Consultar caso por UUID ou publicId
+      summary: Consulta caso por UUID interno ou publicId
+      operationId: getCase
       parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
+        - $ref: '#/components/parameters/CaseId'
       responses:
         "200":
-          description: Caso encontrado
+          description: Dados públicos/minimizados do caso
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/CaseResponse'
         "404":
           $ref: '#/components/responses/NotFound'
-
   /cases/{id}/audit:
     get:
       tags: [legal-audit]
-      summary: Consultar trilha auditavel do caso e aceite legal
+      summary: Consulta trilha auditável do caso e aceite legal
+      operationId: getCaseAudit
+      security:
+        - bearerAuth: []
       parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
+        - $ref: '#/components/parameters/CaseId'
       responses:
         "200":
-          description: Auditoria do caso
+          description: Auditoria autorizada do caso
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/CaseAuditResponse'
         "401":
           $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
-
   /cases/{id}/moderation/start:
     post:
       tags: [cases]
       summary: ENVIADO -> EM_MODERACAO
+      operationId: startModeration
+      security:
+        - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/CaseId'
       responses:
-        "200": { $ref: '#/components/responses/TransitionOk' }
-        "403": { $ref: '#/components/responses/Forbidden' }
-        "409": { $ref: '#/components/responses/Conflict' }
-
+        "200":
+          $ref: '#/components/responses/TransitionOk'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          $ref: '#/components/responses/Conflict'
   /cases/{id}/moderation/approve:
     post:
       tags: [cases]
       summary: EM_MODERACAO -> PUBLICADO
+      operationId: approveModeration
+      security:
+        - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/CaseId'
       responses:
-        "200": { $ref: '#/components/responses/TransitionOk' }
-        "403": { $ref: '#/components/responses/Forbidden' }
-        "409": { $ref: '#/components/responses/Conflict' }
-
+        "200":
+          $ref: '#/components/responses/TransitionOk'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          $ref: '#/components/responses/Conflict'
   /cases/{id}/moderation/reject:
     post:
       tags: [cases]
       summary: EM_MODERACAO -> NAO_RESOLVIDO
+      operationId: rejectModeration
+      security:
+        - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/CaseId'
       requestBody:
@@ -118,36 +135,57 @@ paths:
             schema:
               $ref: '#/components/schemas/RejectCaseRequest'
       responses:
-        "200": { $ref: '#/components/responses/TransitionOk' }
-        "403": { $ref: '#/components/responses/Forbidden' }
-        "409": { $ref: '#/components/responses/Conflict' }
-
+        "200":
+          $ref: '#/components/responses/TransitionOk'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          $ref: '#/components/responses/Conflict'
   /cases/{id}/notify-company:
     post:
       tags: [cases]
-      summary: PUBLICADO -> AGUARDANDO_RESPOSTA_EMPRESA (assinatura interna)
+      summary: PUBLICADO -> AGUARDANDO_RESPOSTA_EMPRESA
+      description: Endpoint interno protegido por assinatura HMAC no header `X-Internal-Signature`.
+      operationId: notifyCompany
       parameters:
         - $ref: '#/components/parameters/CaseId'
+        - in: header
+          name: X-Internal-Signature
+          required: true
+          schema:
+            type: string
+          description: Assinatura HMAC-SHA256 do body com segredo interno. Não usar valor real em exemplos.
       responses:
-        "200": { $ref: '#/components/responses/TransitionOk' }
-        "401": { $ref: '#/components/responses/Unauthorized' }
-        "409": { $ref: '#/components/responses/Conflict' }
-
+        "200":
+          $ref: '#/components/responses/TransitionOk'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "409":
+          $ref: '#/components/responses/Conflict'
   /cases/{id}/company/respond:
     post:
       tags: [cases]
       summary: AGUARDANDO_RESPOSTA_EMPRESA -> EM_NEGOCIACAO
+      operationId: companyRespond
+      security:
+        - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/CaseId'
       responses:
-        "200": { $ref: '#/components/responses/TransitionOk' }
-        "403": { $ref: '#/components/responses/Forbidden' }
-        "409": { $ref: '#/components/responses/Conflict' }
-
+        "200":
+          $ref: '#/components/responses/TransitionOk'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          $ref: '#/components/responses/Conflict'
   /cases/{id}/resolve:
     post:
       tags: [cases]
       summary: EM_NEGOCIACAO -> RESOLVIDO
+      description: Exige confirmação de consumidor e empresa.
+      operationId: resolveCase
+      security:
+        - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/CaseId'
       requestBody:
@@ -157,14 +195,19 @@ paths:
             schema:
               $ref: '#/components/schemas/ResolveCaseRequest'
       responses:
-        "200": { $ref: '#/components/responses/TransitionOk' }
-        "403": { $ref: '#/components/responses/Forbidden' }
-        "409": { $ref: '#/components/responses/Conflict' }
-
+        "200":
+          $ref: '#/components/responses/TransitionOk'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          $ref: '#/components/responses/Conflict'
   /cases/{id}/close-unresolved:
     post:
       tags: [cases]
-      summary: EM_NEGOCIACAO -> NAO_RESOLVIDO
+      summary: EM_NEGOCIACAO ou AGUARDANDO_RESPOSTA_EMPRESA -> NAO_RESOLVIDO
+      operationId: closeUnresolvedCase
+      security:
+        - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/CaseId'
       requestBody:
@@ -174,9 +217,12 @@ paths:
             schema:
               $ref: '#/components/schemas/CloseUnresolvedRequest'
       responses:
-        "200": { $ref: '#/components/responses/TransitionOk' }
-        "403": { $ref: '#/components/responses/Forbidden' }
-        "409": { $ref: '#/components/responses/Conflict' }
+        "200":
+          $ref: '#/components/responses/TransitionOk'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          $ref: '#/components/responses/Conflict'
 
 components:
   securitySchemes:
@@ -184,7 +230,6 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-
   parameters:
     CaseId:
       in: path
@@ -192,121 +237,195 @@ components:
       required: true
       schema:
         type: string
-        format: uuid
-
+      description: UUID interno do caso ou publicId no formato operacional da API.
   responses:
     Unauthorized:
-      description: Nao autorizado
-      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+      description: Não autenticado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     Forbidden:
-      description: Sem permissao
-      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+      description: Sem permissão para executar a ação
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     NotFound:
-      description: Recurso nao encontrado
-      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+      description: Recurso não encontrado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     Conflict:
-      description: Violacao de regra de negocio/transicao
-      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+      description: Violação de regra de negócio ou transição inválida
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     UnprocessableEntity:
-      description: Validacao semantica invalida
-      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+      description: Validação semântica inválida
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     TransitionOk:
-      description: Transicao executada
+      description: Transição executada com timeline/auditoria
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/TransitionResponse'
-
   schemas:
     OpenCaseRequest:
       type: object
       required: [companyId, experienceType, category, description, occurredAt, legalAcceptance]
       properties:
-        companyId: { type: string, format: uuid }
-        experienceType: { type: string, enum: [reclamacao, denuncia, elogio, duvida_resolvida] }
-        category: { type: string, enum: [imoveis, servicos, ecommerce, financeiro, saude, educacao, outro] }
-        description: { type: string, minLength: 50, maxLength: 4000 }
-        monetaryValue: { type: number }
-        occurredAt: { type: string, format: date }
+        companyId:
+          type: string
+          format: uuid
+        experienceType:
+          type: string
+          enum: [reclamacao, denuncia, elogio, duvida_resolvida]
+        category:
+          type: string
+          enum: [imoveis, servicos, ecommerce, financeiro, saude, educacao, outro]
+        description:
+          type: string
+          minLength: 50
+          maxLength: 4000
+        monetaryValue:
+          type: number
+          nullable: true
+        occurredAt:
+          type: string
+          format: date
+        questionnaireAnswers:
+          type: object
+          additionalProperties: true
         legalAcceptance:
           type: object
           required: [termId, contentHashEcho]
           properties:
-            termId: { type: string }
-            contentHashEcho: { type: string }
-
+            termId:
+              type: string
+            contentHashEcho:
+              type: string
     CaseCreatedResponse:
       type: object
       properties:
-        id: { type: string, format: uuid }
-        publicId: { type: string }
-        status: { $ref: '#/components/schemas/CaseStatus' }
-
+        id:
+          type: string
+          format: uuid
+        publicId:
+          type: string
+        status:
+          $ref: '#/components/schemas/CaseStatus'
     CaseResponse:
       type: object
       properties:
-        id: { type: string, format: uuid }
-        publicId: { type: string }
-        status: { $ref: '#/components/schemas/CaseStatus' }
-        experienceType: { type: string }
-        category: { type: string }
-        description: { type: string }
-        monetaryValue: { type: number, nullable: true }
-        occurredAt: { type: string, format: date }
-        submittedAt: { type: string, format: date-time }
-        publishedAt: { type: string, format: date-time, nullable: true }
-
+        id:
+          type: string
+          format: uuid
+        publicId:
+          type: string
+        status:
+          $ref: '#/components/schemas/CaseStatus'
+        experienceType:
+          type: string
+        category:
+          type: string
+        description:
+          type: string
+        monetaryValue:
+          type: number
+          nullable: true
+        occurredAt:
+          type: string
+          format: date
+        submittedAt:
+          type: string
+          format: date-time
+        publishedAt:
+          type: string
+          format: date-time
+          nullable: true
     CaseAuditResponse:
       type: object
       properties:
         case:
           type: object
           properties:
-            id: { type: string, format: uuid }
-            status: { $ref: '#/components/schemas/CaseStatus' }
+            id:
+              type: string
+              format: uuid
+            status:
+              $ref: '#/components/schemas/CaseStatus'
         termAcceptance:
           type: object
           nullable: true
           properties:
-            termVersion: { type: string }
-            contentHash: { type: string }
-            acceptedAt: { type: string, format: date-time }
-            ip: { type: string }
-
+            termVersion:
+              type: string
+            contentHash:
+              type: string
+            acceptedAt:
+              type: string
+              format: date-time
+            ip:
+              type: string
+              description: IP normalizado para auditoria legal.
     ResolveCaseRequest:
       type: object
       required: [consumerConfirmed, companyConfirmed]
       properties:
-        consumerConfirmed: { type: boolean }
-        companyConfirmed: { type: boolean }
-
+        consumerConfirmed:
+          type: boolean
+        companyConfirmed:
+          type: boolean
     RejectCaseRequest:
       type: object
       required: [reason]
       properties:
-        reason: { type: string }
-
+        reason:
+          type: string
+          minLength: 3
     CloseUnresolvedRequest:
       type: object
       required: [reason]
       properties:
-        reason: { type: string }
-
+        reason:
+          type: string
+          minLength: 3
     TransitionResponse:
       type: object
       properties:
-        caseId: { type: string, format: uuid }
-        fromStatus: { $ref: '#/components/schemas/CaseStatus' }
-        toStatus: { $ref: '#/components/schemas/CaseStatus' }
-        transitionId: { type: string, format: uuid }
-
+        caseId:
+          type: string
+          format: uuid
+        fromStatus:
+          $ref: '#/components/schemas/CaseStatus'
+        toStatus:
+          $ref: '#/components/schemas/CaseStatus'
+        transitionId:
+          type: string
+          format: uuid
     CaseStatus:
       type: string
-      enum: [ENVIADO, EM_MODERACAO, PUBLICADO, AGUARDANDO_RESPOSTA_EMPRESA, EM_NEGOCIACAO, RESOLVIDO, NAO_RESOLVIDO]
-
+      enum:
+        - ENVIADO
+        - EM_MODERACAO
+        - PUBLICADO
+        - AGUARDANDO_RESPOSTA_EMPRESA
+        - EM_NEGOCIACAO
+        - RESOLVIDO
+        - NAO_RESOLVIDO
     ErrorResponse:
       type: object
       properties:
-        statusCode: { type: integer }
+        statusCode:
+          type: integer
         message: {}
-        error: { type: string }
+        error:
+          type: string
+        code:
+          type: string
