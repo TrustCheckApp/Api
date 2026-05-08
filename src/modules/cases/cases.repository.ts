@@ -66,6 +66,17 @@ export class CasesRepository {
     });
   }
 
+  async findAuditAccessById(id: string) {
+    return this.prisma.case.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        status: true,
+        consumerUserId: true,
+      },
+    });
+  }
+
   async listByConsumer(consumerUserId: string, skip = 0, take = 20) {
     return this.prisma.case.findMany({
       where: { consumerUserId },

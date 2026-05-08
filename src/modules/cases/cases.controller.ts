@@ -54,12 +54,8 @@ export class CasesController {
   @ApiResponse({ status: 404, description: 'Empresa não encontrada (COMPANY_NOT_FOUND)' })
   @ApiResponse({ status: 422, description: 'Validação: data futura, descrição curta, enum inválido' })
   @ApiResponse({ status: 401, description: 'Não autenticado' })
-  async openCase(
-    @Body() dto: OpenCaseDto,
-    @Req() req: AuthRequest,
-  ) {
-    const consumerUserId = req.user?.id ?? '';
-    return this.casesService.openCase(consumerUserId, dto, {
+  async openCase(@Body() dto: OpenCaseDto, @Req() req: AuthRequest) {
+    return this.casesService.openCase(req.user?.id ?? '', dto, {
       ip: req.ip,
       userAgent: req.headers['user-agent'],
     });
@@ -85,18 +81,10 @@ export class CasesController {
   @ApiResponse({ status: 200, description: 'Histórico auditável do caso' })
   @ApiResponse({ status: 404, description: 'Caso não encontrado' })
   async auditCase(@Param('id') id: string, @Req() req: AuthRequest) {
-    const found = await this.casesService.getCase(id);
-
-    if (req.user?.role === 'consumer' && (found as { consumerUserId?: string }).consumerUserId !== req.user.id) {
-      throw new ConflictException({
-        code: 'CASE_AUDIT_FORBIDDEN',
-        message: 'Consumidor não possui acesso à auditoria deste caso.',
-      });
-    }
-
+    const found = await this.casesService.getCaseAuditAccess(id, req.user);
     const termAcceptance = await this.legalTermsRepo.findAcceptanceByCaseId(id);
     return {
-      case: { id: (found as { id: string }).id, status: (found as { status: string }).status },
+      case: { id: found.id, status: found.status },
       termAcceptance: termAcceptance
         ? {
             termVersion: termAcceptance.termVersion,
@@ -113,16 +101,12 @@ export class CasesController {
   @ApiBearerAuth()
   @UseGuards(JwtGuard, RolesGuard)
   @Roles('admin')
-  @ApiOperation({ summary: 'Iniciar moderação — ENVIADO → EM_MODERACAO (admin)' })
-  @ApiResponse({ status: 200, description: 'Transição realizada' })
-  @ApiResponse({ status: 409, description: 'Transição inválida ou conflito de estado' })
-  @ApiResponse({ status: 403, description: 'Role não autorizado' })
   async startModeration(@Param('id') id: string, @Req() req: AuthRequest) {
-    return this.stateMachine.transition(
-      id,
-      CaseStatus.EM_MODERACAO,
-      { id: req.user?.id, role: req.user?.role as ActorRole, ip: req.ip },
-    );
+    return this.stateMachine.transition(id, CaseStatus.EM_MODERACAO, {
+      id: req.user?.id,
+      role: req.user?.role as ActorRole,
+      ip: req.ip,
+    });
   }
 
   @Post(':id/moderation/approve')
@@ -130,15 +114,12 @@ export class CasesController {
   @ApiBearerAuth()
   @UseGuards(JwtGuard, RolesGuard)
   @Roles('admin')
-  @ApiOperation({ summary: 'Aprovar moderação — EM_MODERACAO → PUBLICADO (admin, W03)' })
-  @ApiResponse({ status: 200, description: 'Caso publicado' })
-  @ApiResponse({ status: 409, description: 'Transição inválida' })
   async approveModeration(@Param('id') id: string, @Req() req: AuthRequest) {
-    return this.stateMachine.transition(
-      id,
-      CaseStatus.PUBLICADO,
-      { id: req.user?.id, role: req.user?.role as ActorRole, ip: req.ip },
-    );
+    return this.stateMachine.transition(id, CaseStatus.PUBLICADO, {
+      id: req.user?.id,
+      role: req.user?.role as ActorRole,
+      ip: req.ip,
+    });
   }
 
   @Post(':id/moderation/reject')
@@ -146,14 +127,7 @@ export class CasesController {
   @ApiBearerAuth()
   @UseGuards(JwtGuard, RolesGuard)
   @Roles('admin')
-  @ApiOperation({ summary: 'Rejeitar na moderação — EM_MODERACAO → NAO_RESOLVIDO (admin)' })
-  @ApiResponse({ status: 200, description: 'Caso encerrado como não resolvido' })
-  @ApiResponse({ status: 409, description: 'Transição inválida' })
-  async rejectModeration(
-    @Param('id') id: string,
-    @Body() dto: RejectCaseDto,
-    @Req() req: AuthRequest,
-  ) {
+  async rejectModeration(@Param('id') id: string, @Body() dto: RejectCaseDto, @Req() req: AuthRequest) {
     return this.stateMachine.transition(
       id,
       CaseStatus.NAO_RESOLVIDO,
@@ -165,16 +139,12 @@ export class CasesController {
   @Post(':id/notify-company')
   @HttpCode(HttpStatus.OK)
   @UseGuards(InternalGuard)
-  @ApiOperation({ summary: 'Notificar empresa — PUBLICADO → AGUARDANDO_RESPOSTA_EMPRESA (system)' })
   @ApiHeader({ name: 'X-Internal-Signature', description: 'HMAC-SHA256 do body com INTERNAL_HMAC_SECRET' })
-  @ApiResponse({ status: 200, description: 'Empresa notificada' })
-  @ApiResponse({ status: 401, description: 'Assinatura HMAC inválida' })
   async notifyCompany(@Param('id') id: string, @Req() req: AuthRequest) {
-    return this.stateMachine.transition(
-      id,
-      CaseStatus.AGUARDANDO_RESPOSTA_EMPRESA,
-      { role: ActorRole.system, ip: req.ip },
-    );
+    return this.stateMachine.transition(id, CaseStatus.AGUARDANDO_RESPOSTA_EMPRESA, {
+      role: ActorRole.system,
+      ip: req.ip,
+    });
   }
 
   @Post(':id/company/respond')
@@ -182,15 +152,12 @@ export class CasesController {
   @ApiBearerAuth()
   @UseGuards(JwtGuard, RolesGuard)
   @Roles('company')
-  @ApiOperation({ summary: 'Empresa aceita negociar — AGUARDANDO_RESPOSTA_EMPRESA → EM_NEGOCIACAO (company)' })
-  @ApiResponse({ status: 200, description: 'Negociação iniciada' })
-  @ApiResponse({ status: 409, description: 'Transição inválida' })
   async companyRespond(@Param('id') id: string, @Req() req: AuthRequest) {
-    return this.stateMachine.transition(
-      id,
-      CaseStatus.EM_NEGOCIACAO,
-      { id: req.user?.id, role: req.user?.role as ActorRole, ip: req.ip },
-    );
+    return this.stateMachine.transition(id, CaseStatus.EM_NEGOCIACAO, {
+      id: req.user?.id,
+      role: req.user?.role as ActorRole,
+      ip: req.ip,
+    });
   }
 
   @Post(':id/resolve')
@@ -198,14 +165,7 @@ export class CasesController {
   @ApiBearerAuth()
   @UseGuards(JwtGuard, RolesGuard)
   @Roles('admin')
-  @ApiOperation({ summary: 'Encerrar como resolvido — EM_NEGOCIACAO → RESOLVIDO (admin)' })
-  @ApiResponse({ status: 200, description: 'Caso resolvido' })
-  @ApiResponse({ status: 409, description: 'Transição inválida ou confirmação ausente' })
-  async resolve(
-    @Param('id') id: string,
-    @Body() dto: ResolveCaseDto,
-    @Req() req: AuthRequest,
-  ) {
+  async resolve(@Param('id') id: string, @Body() dto: ResolveCaseDto, @Req() req: AuthRequest) {
     if (!dto.consumerConfirmed || !dto.companyConfirmed) {
       throw new ConflictException({
         code: 'CASE_RESOLUTION_CONFIRMATION_REQUIRED',
@@ -225,14 +185,7 @@ export class CasesController {
   @ApiBearerAuth()
   @UseGuards(JwtGuard, RolesGuard)
   @Roles('admin', 'consumer')
-  @ApiOperation({ summary: 'Encerrar sem resolução — EM_NEGOCIACAO → NAO_RESOLVIDO (admin/consumidor, W07)' })
-  @ApiResponse({ status: 200, description: 'Caso encerrado como não resolvido' })
-  @ApiResponse({ status: 409, description: 'Transição inválida' })
-  async closeUnresolved(
-    @Param('id') id: string,
-    @Body() dto: CloseUnresolvedDto,
-    @Req() req: AuthRequest,
-  ) {
+  async closeUnresolved(@Param('id') id: string, @Body() dto: CloseUnresolvedDto, @Req() req: AuthRequest) {
     return this.stateMachine.transition(
       id,
       CaseStatus.NAO_RESOLVIDO,
