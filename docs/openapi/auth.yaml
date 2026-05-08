@@ -2,9 +2,14 @@ openapi: 3.0.3
 info:
   title: TrustCheck API - AUTH
   description: |
-    Contrato do modulo AUTH alinhado aos endpoints implementados na Sprint 01.
-    Escopo: cadastro consumidor/empresa, confirmacao OTP, SSO e claim empresarial.
-  version: "1.1.0"
+    Contrato do módulo AUTH alinhado aos controllers implementados na Sprint 01.
+    Este arquivo cobre cadastro consumidor/empresa, confirmação OTP, SSO e claim empresarial.
+
+    Regras de segurança/LGPD:
+    - Exemplos não devem conter OTP, access token, refresh token, TOTP secret, recovery code ou secret real.
+    - Campos sensíveis retornados em fluxo one-shot são marcados com `x-sensitive: true`.
+    - Logs e auditoria devem usar payload sanitizado.
+  version: "1.1.1"
 servers:
   - url: http://localhost:3000
   - url: https://api.trustcheck.com.br
@@ -19,6 +24,7 @@ paths:
     post:
       tags: [auth-consumer]
       summary: Inicia cadastro de consumidor
+      operationId: registerConsumer
       requestBody:
         required: true
         content:
@@ -27,7 +33,7 @@ paths:
               $ref: '#/components/schemas/RegisterConsumerRequest'
       responses:
         "201":
-          description: Usuario criado em pending_otp com registrationToken
+          description: Cadastro iniciado e OTP enviado
           content:
             application/json:
               schema:
@@ -36,11 +42,11 @@ paths:
           $ref: '#/components/responses/Conflict'
         "422":
           $ref: '#/components/responses/UnprocessableEntity'
-
   /auth/consumer/register/confirm:
     post:
       tags: [auth-consumer]
       summary: Confirma cadastro do consumidor com OTP
+      operationId: confirmConsumerRegistration
       requestBody:
         required: true
         content:
@@ -58,11 +64,11 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "401":
           $ref: '#/components/responses/Unauthorized'
-
   /auth/company/register:
     post:
       tags: [auth-company]
       summary: Inicia cadastro empresarial
+      operationId: registerCompany
       requestBody:
         required: true
         content:
@@ -71,7 +77,7 @@ paths:
               $ref: '#/components/schemas/RegisterCompanyRequest'
       responses:
         "201":
-          description: Usuario/empresa criados e OTP enviado
+          description: Cadastro iniciado e OTP enviado
           content:
             application/json:
               schema:
@@ -80,11 +86,14 @@ paths:
           $ref: '#/components/responses/Conflict'
         "422":
           $ref: '#/components/responses/UnprocessableEntity'
-
   /auth/company/register/confirm:
     post:
       tags: [auth-company]
       summary: Confirma OTP e inicia enrolamento TOTP da empresa
+      description: |
+        Endpoint de resposta one-shot. Retorna token temporário para etapa `totp_pending` e material de enrolamento TOTP.
+        Os campos `totpSecret`, `qrCodeDataUrl` e `recoveryCodes` são sensíveis, não devem ser logados e não possuem exemplos.
+      operationId: confirmCompanyRegistration
       requestBody:
         required: true
         content:
@@ -93,7 +102,7 @@ paths:
               $ref: '#/components/schemas/RegisterConfirmRequest'
       responses:
         "200":
-          description: Token temporario + segredo/QR/recovery codes
+          description: OTP válido e enrolamento TOTP iniciado
           content:
             application/json:
               schema:
@@ -102,11 +111,11 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "401":
           $ref: '#/components/responses/Unauthorized'
-
   /auth/company/claim:
     post:
       tags: [auth-company]
       summary: Reivindica perfil empresarial por CNPJ
+      operationId: claimCompanyProfile
       requestBody:
         required: true
         content:
@@ -115,7 +124,7 @@ paths:
               $ref: '#/components/schemas/ClaimCompanyRequest'
       responses:
         "202":
-          description: Claim registrado para analise
+          description: Claim registrado para análise e OTP enviado
           content:
             application/json:
               schema:
@@ -124,11 +133,13 @@ paths:
           $ref: '#/components/responses/Conflict'
         "422":
           $ref: '#/components/responses/UnprocessableEntity'
-
   /auth/company/claim/{claimId}/status:
     get:
       tags: [auth-company]
-      summary: Consulta status do claim (requer autenticacao)
+      summary: Consulta status da reivindicação empresarial
+      operationId: getCompanyClaimStatus
+      security:
+        - bearerAuth: []
       parameters:
         - in: path
           name: claimId
@@ -136,11 +147,9 @@ paths:
           schema:
             type: string
             format: uuid
-      security:
-        - bearerAuth: []
       responses:
         "200":
-          description: Status atual do claim
+          description: Status atual do claim retornado
           content:
             application/json:
               schema:
@@ -149,11 +158,11 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "404":
           $ref: '#/components/responses/NotFound'
-
   /auth/sso/google:
     post:
       tags: [auth-sso]
-      summary: Login/cadastro via token Google
+      summary: Login ou cadastro via token Google
+      operationId: ssoGoogle
       requestBody:
         required: true
         content:
@@ -162,7 +171,7 @@ paths:
               $ref: '#/components/schemas/SsoAuthRequest'
       responses:
         "200":
-          description: Tokens emitidos
+          description: Autenticado via Google e tokens emitidos
           content:
             application/json:
               schema:
@@ -171,11 +180,11 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "422":
           $ref: '#/components/responses/UnprocessableEntity'
-
   /auth/sso/apple:
     post:
       tags: [auth-sso]
-      summary: Login/cadastro via token Apple
+      summary: Login ou cadastro via token Apple
+      operationId: ssoApple
       requestBody:
         required: true
         content:
@@ -184,7 +193,7 @@ paths:
               $ref: '#/components/schemas/SsoAuthRequest'
       responses:
         "200":
-          description: Tokens emitidos
+          description: Autenticado via Apple e tokens emitidos
           content:
             application/json:
               schema:
@@ -200,150 +209,228 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-
   responses:
     BadRequest:
-      description: Requisicao invalida
+      description: Requisição inválida
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     Unauthorized:
-      description: Nao autorizado
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    Conflict:
-      description: Conflito de regra de negocio
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-    UnprocessableEntity:
-      description: Validacao semantica invalida
+      description: Não autenticado ou token inválido
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     NotFound:
-      description: Recurso nao encontrado
+      description: Recurso não encontrado
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
-
+    Conflict:
+      description: Conflito de regra de negócio
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UnprocessableEntity:
+      description: Validação semântica inválida
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
   schemas:
     RegisterConsumerRequest:
       type: object
       required: [email, password, fullName, lgpdAccepted, lgpdVersion]
       properties:
-        email: { type: string, format: email }
-        password: { type: string, minLength: 10 }
-        fullName: { type: string }
-        phone: { type: string }
-        lgpdAccepted: { type: boolean }
-        lgpdVersion: { type: string }
-
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 10
+          writeOnly: true
+        fullName:
+          type: string
+        phone:
+          type: string
+        lgpdAccepted:
+          type: boolean
+        lgpdVersion:
+          type: string
     RegisterCompanyRequest:
       type: object
       required: [email, password, cnpj, legalName, fullName, lgpdAccepted, lgpdVersion]
       properties:
-        email: { type: string, format: email }
-        password: { type: string, minLength: 10 }
-        cnpj: { type: string }
-        legalName: { type: string }
-        tradeName: { type: string }
-        fullName: { type: string }
-        phone: { type: string }
-        lgpdAccepted: { type: boolean }
-        lgpdVersion: { type: string }
-
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 10
+          writeOnly: true
+        cnpj:
+          type: string
+        legalName:
+          type: string
+        tradeName:
+          type: string
+        fullName:
+          type: string
+        phone:
+          type: string
+        lgpdAccepted:
+          type: boolean
+        lgpdVersion:
+          type: string
     RegisterConfirmRequest:
       type: object
       required: [registrationToken, otp]
       properties:
-        registrationToken: { type: string }
+        registrationToken:
+          type: string
+          writeOnly: true
+          x-sensitive: true
         otp:
           type: string
           pattern: '^\\d{6}$'
-
+          writeOnly: true
+          x-sensitive: true
     ClaimCompanyRequest:
       type: object
       required: [cnpj, legalName, email, password, fullName, documents, lgpdAccepted, lgpdVersion]
       properties:
-        cnpj: { type: string }
-        legalName: { type: string }
-        tradeName: { type: string }
-        email: { type: string, format: email }
-        password: { type: string, minLength: 10 }
-        fullName: { type: string }
-        phone: { type: string }
+        cnpj:
+          type: string
+        legalName:
+          type: string
+        tradeName:
+          type: string
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 10
+          writeOnly: true
+        fullName:
+          type: string
+        phone:
+          type: string
         documents:
           type: array
           minItems: 1
           items:
             $ref: '#/components/schemas/ClaimDocument'
-        lgpdAccepted: { type: boolean }
-        lgpdVersion: { type: string }
-
+        lgpdAccepted:
+          type: boolean
+        lgpdVersion:
+          type: string
     ClaimDocument:
       type: object
       required: [url, fileName, mimeType, sizeBytes]
       properties:
-        url: { type: string, format: uri }
-        fileName: { type: string }
-        mimeType: { type: string }
-        sizeBytes: { type: integer, minimum: 1 }
-
+        url:
+          type: string
+          format: uri
+        fileName:
+          type: string
+        mimeType:
+          type: string
+        sizeBytes:
+          type: integer
+          minimum: 1
     SsoAuthRequest:
       type: object
       required: [idToken, lgpdAccepted, lgpdVersion]
       properties:
-        idToken: { type: string }
-        lgpdAccepted: { type: boolean }
-        lgpdVersion: { type: string }
-
+        idToken:
+          type: string
+          writeOnly: true
+          x-sensitive: true
+        lgpdAccepted:
+          type: boolean
+        lgpdVersion:
+          type: string
     RegisterInitResponse:
       type: object
       properties:
-        userId: { type: string, format: uuid }
-        registrationToken: { type: string }
-
+        userId:
+          type: string
+          format: uuid
+        registrationToken:
+          type: string
+          x-sensitive: true
+          description: Token temporário de confirmação. Não deve ser logado nem usado em exemplos reais.
     ClaimCreatedResponse:
       type: object
       properties:
-        claimId: { type: string, format: uuid }
-        registrationToken: { type: string }
-
+        claimId:
+          type: string
+          format: uuid
+        registrationToken:
+          type: string
+          x-sensitive: true
+          description: Token temporário de confirmação. Não deve ser logado nem usado em exemplos reais.
     ClaimStatusResponse:
       type: object
       properties:
-        claimId: { type: string, format: uuid }
-        status: { type: string, enum: [pending_review, approved, rejected] }
-        submittedAt: { type: string, format: date-time }
-        reviewedAt: { type: string, format: date-time, nullable: true }
-        rejectionReason: { type: string, nullable: true }
-
+        claimId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending_review, approved, rejected]
+        submittedAt:
+          type: string
+          format: date-time
+        reviewedAt:
+          type: string
+          format: date-time
+          nullable: true
+        rejectionReason:
+          type: string
+          nullable: true
     TokensResponse:
       type: object
       properties:
-        accessToken: { type: string }
-        refreshToken: { type: string }
-
+        accessToken:
+          type: string
+          x-sensitive: true
+        refreshToken:
+          type: string
+          x-sensitive: true
     CompanyConfirmResponse:
       type: object
+      description: Resposta one-shot para configuração obrigatória de 2FA empresarial.
       properties:
-        accessToken: { type: string, description: token temporario totp_pending }
-        totpSecret: { type: string }
-        qrCodeDataUrl: { type: string }
+        accessToken:
+          type: string
+          description: Token temporário com escopo `totp_pending`.
+          x-sensitive: true
+        totpSecret:
+          type: string
+          description: Segredo TOTP exibido apenas no enrolamento inicial. Não logar, não persistir em cliente e não usar em exemplos.
+          x-sensitive: true
+        qrCodeDataUrl:
+          type: string
+          description: QR Code de enrolamento TOTP em data URL. Conteúdo sensível one-shot.
+          x-sensitive: true
         recoveryCodes:
           type: array
-          items: { type: string }
-
+          description: Códigos de recuperação one-shot. Não logar e não exibir em exemplos.
+          x-sensitive: true
+          items:
+            type: string
     ErrorResponse:
       type: object
       properties:
-        statusCode: { type: integer }
+        statusCode:
+          type: integer
         message: {}
-        error: { type: string }
+        error:
+          type: string
+        code:
+          type: string
