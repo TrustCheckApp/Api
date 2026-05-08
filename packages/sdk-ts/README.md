@@ -5,7 +5,7 @@ SDK TypeScript gerado a partir do contrato oficial `openapi/openapi.yaml`.
 ## Fonte de verdade
 
 - Contrato consumível: `../../openapi/openapi.yaml`
-- Gerador: `@hey-api/openapi-ts`
+- Gerador do workspace: `@hey-api/openapi-ts`
 - Cliente HTTP: `@hey-api/client-fetch`
 
 ## Comandos
@@ -65,3 +65,7 @@ npm run sdk:build
 ```
 
 O CI da API também valida geração e build do SDK para evitar divergência entre contrato e clientes.
+
+## Observação sobre lockfile
+
+As versões de dependências do workspace são mantidas sincronizadas com `package-lock.json`. Mudanças de versão no SDK devem atualizar o lockfile no mesmo PR.

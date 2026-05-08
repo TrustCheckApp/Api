@@ -1,7 +1,7 @@
 {
   "name": "@trustcheck/sdk-ts",
-  "version": "1.0.0",
-  "description": "SDK TypeScript gerado a partir do contrato OpenAPI oficial da TrustCheck API",
+  "version": "1.4.0",
+  "description": "SDK TypeScript gerado a partir do openapi.yaml da TrustCheck API",
   "private": true,
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -9,7 +9,7 @@
     "dist"
   ],
   "scripts": {
-    "generate": "openapi-ts -i ../../openapi/openapi.yaml -o ./src",
+    "generate": "openapi-ts --input ../../openapi/openapi.yaml --output ./src --client @hey-api/client-fetch",
     "build": "tsc -p tsconfig.json",
     "clean": "rimraf dist src",
     "check": "npm run generate && npm run build"
@@ -18,7 +18,7 @@
     "@hey-api/client-fetch": "^0.2.4"
   },
   "devDependencies": {
-    "@hey-api/openapi-ts": "^0.97.0",
+    "@hey-api/openapi-ts": "0.47.0",
     "typescript": "^5.4.2",
     "rimraf": "^5.0.5"
   }
