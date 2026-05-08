@@ -6,14 +6,10 @@ import {
 } from '@nestjs/common';
 import { CasesRepository } from './cases.repository';
 import { OpenCaseDto } from './dto/open-case.dto';
-import { LegalTermsService } from '../legal-terms/legal-terms.service';
 
 @Injectable()
 export class CasesService {
-  constructor(
-    private readonly repo: CasesRepository,
-    private readonly legalTermsService: LegalTermsService,
-  ) {}
+  constructor(private readonly repo: CasesRepository) {}
 
   async openCase(
     consumerUserId: string,
@@ -46,24 +42,24 @@ export class CasesService {
       });
     }
 
-    const created = await this.repo.createDraft({
-      consumerUserId,
-      companyId: dto.companyId,
-      experienceType: dto.experienceType,
-      category: dto.category,
-      description: dto.description,
-      monetaryValue: dto.monetaryValue,
-      occurredAt: occurred,
-    });
-
-    await this.legalTermsService.validateAndCreateAcceptance({
-      caseId: created.id,
-      userId: consumerUserId,
-      termId: dto.legalAcceptance.termId,
-      contentHashEcho: dto.legalAcceptance.contentHashEcho,
-      ip: meta?.ip,
-      userAgent: meta?.userAgent,
-    });
+    const created = await this.repo.createDraftWithLegalAcceptance(
+      {
+        consumerUserId,
+        companyId: dto.companyId,
+        experienceType: dto.experienceType,
+        category: dto.category,
+        description: dto.description,
+        monetaryValue: dto.monetaryValue,
+        occurredAt: occurred,
+      },
+      {
+        userId: consumerUserId,
+        termId: dto.legalAcceptance.termId,
+        contentHashEcho: dto.legalAcceptance.contentHashEcho,
+        ip: meta?.ip,
+        userAgent: meta?.userAgent,
+      },
+    );
 
     return {
       id: created.id,
