@@ -16,8 +16,8 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { OtpService } from '../otp.service';
 import { AuditService } from '../../../common/audit/audit.service';
 import { AuditAction } from '../../../common/audit/audit-actions.const';
-import { RegisterCompanyDto, ClaimCompanyDto } from './dto/company-auth.dto';
-import { CompanyStatus, UserRole, UserStatus } from '@prisma/client';
+import { RegisterCompanyDto, ClaimCompanyDto, RejectCompanyClaimDto } from './dto/company-auth.dto';
+import { ClaimStatus, CompanyStatus, UserRole, UserStatus } from '@prisma/client';
 
 const BCRYPT_ROUNDS = 12;
 const REG_TOKEN_TTL = '10m';
@@ -28,6 +28,15 @@ type CompanyRegistrationTokenPayload = {
   scope: string;
   role?: string;
   claimId?: string;
+};
+
+type RequestMeta = { ip?: string; userAgent?: string };
+
+type ClaimReviewResponse = {
+  claimId: string;
+  status: ClaimStatus;
+  reviewedAt: Date | null;
+  rejectionReason: string | null;
 };
 
 @Injectable()
@@ -134,7 +143,7 @@ export class CompanyAuthService {
   async confirmAndEnrollTotp(
     registrationToken: string,
     otp: string,
-    meta?: { ip?: string; userAgent?: string },
+    meta?: RequestMeta,
   ): Promise<{
     accessToken: string;
     totpSecret: string;
@@ -319,6 +328,116 @@ export class CompanyAuthService {
     );
 
     return { claimId: claim.id, registrationToken };
+  }
+
+  async approveClaim(claimId: string, reviewerUserId: string, meta?: RequestMeta): Promise<ClaimReviewResponse> {
+    const reviewed = await this.prisma.$transaction(async (tx) => {
+      const claim = await tx.companyClaim.findUnique({ where: { id: claimId } });
+
+      if (!claim) {
+        throw new NotFoundException({ code: 'CLAIM_NOT_FOUND', message: 'Solicitação de reivindicação não encontrada.' });
+      }
+
+      if (claim.status !== ClaimStatus.pending_review) {
+        throw new ConflictException({ code: 'CLAIM_ALREADY_REVIEWED', message: 'Solicitação de reivindicação já foi revisada.' });
+      }
+
+      await tx.company.update({ where: { id: claim.companyId }, data: { status: CompanyStatus.active } });
+
+      await tx.companyProfile.upsert({
+        where: { userId: claim.requesterUserId },
+        update: { companyId: claim.companyId, role: 'owner' },
+        create: { userId: claim.requesterUserId, companyId: claim.companyId, role: 'owner' },
+      });
+
+      return tx.companyClaim.update({
+        where: { id: claimId },
+        data: {
+          status: ClaimStatus.approved,
+          reviewedAt: new Date(),
+          reviewedBy: reviewerUserId,
+          rejectionReason: null,
+        },
+      });
+    });
+
+    await this.auditService.log({
+      actorUserId: reviewerUserId,
+      action: AuditAction.COMPANY_CLAIM_APPROVED,
+      entity: 'CompanyClaim',
+      entityId: reviewed.id,
+      payload: {
+        claimId: reviewed.id,
+        companyId: reviewed.companyId,
+        requesterUserId: reviewed.requesterUserId,
+        reviewerUserId,
+        fromStatus: ClaimStatus.pending_review,
+        toStatus: ClaimStatus.approved,
+      },
+      ip: meta?.ip,
+      userAgent: meta?.userAgent,
+    });
+
+    return {
+      claimId: reviewed.id,
+      status: reviewed.status,
+      reviewedAt: reviewed.reviewedAt,
+      rejectionReason: reviewed.rejectionReason,
+    };
+  }
+
+  async rejectClaim(
+    claimId: string,
+    reviewerUserId: string,
+    dto: RejectCompanyClaimDto,
+    meta?: RequestMeta,
+  ): Promise<ClaimReviewResponse> {
+    const reviewed = await this.prisma.$transaction(async (tx) => {
+      const claim = await tx.companyClaim.findUnique({ where: { id: claimId } });
+
+      if (!claim) {
+        throw new NotFoundException({ code: 'CLAIM_NOT_FOUND', message: 'Solicitação de reivindicação não encontrada.' });
+      }
+
+      if (claim.status !== ClaimStatus.pending_review) {
+        throw new ConflictException({ code: 'CLAIM_ALREADY_REVIEWED', message: 'Solicitação de reivindicação já foi revisada.' });
+      }
+
+      return tx.companyClaim.update({
+        where: { id: claimId },
+        data: {
+          status: ClaimStatus.rejected,
+          reviewedAt: new Date(),
+          reviewedBy: reviewerUserId,
+          rejectionReason: dto.reason,
+        },
+      });
+    });
+
+    await this.auditService.log({
+      actorUserId: reviewerUserId,
+      action: AuditAction.COMPANY_CLAIM_REJECTED,
+      entity: 'CompanyClaim',
+      entityId: reviewed.id,
+      payload: {
+        claimId: reviewed.id,
+        companyId: reviewed.companyId,
+        requesterUserId: reviewed.requesterUserId,
+        reviewerUserId,
+        fromStatus: ClaimStatus.pending_review,
+        toStatus: ClaimStatus.rejected,
+        reason: dto.reason,
+      },
+      ip: meta?.ip,
+      userAgent: meta?.userAgent,
+    });
+
+    return {
+      claimId: reviewed.id,
+      status: reviewed.status,
+      reviewedAt: reviewed.reviewedAt,
+      rejectionReason: reviewed.rejectionReason,
+    };
   }
 
   async claimStatus(
