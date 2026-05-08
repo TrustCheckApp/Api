@@ -1,0 +1,217 @@
+openapi: 3.0.3
+info:
+  title: TrustCheck API - MIDIA
+  description: |
+    Contrato inicial do módulo MIDIA para evidências de casos.
+
+    Esta versão registra apenas metadados autorizados de evidências e prepara a integração futura com signed upload.
+    O endpoint não recebe binário e não expõe `storageKey`, bucket, URL privada ou chave de storage.
+  version: "1.0.0"
+servers:
+  - url: http://localhost:3000
+  - url: https://api.trustcheck.com.br
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: case-evidences
+
+paths:
+  /cases/{caseId}/evidences:
+    post:
+      tags: [case-evidences]
+      summary: Registrar metadados de evidência de caso
+      description: |
+        Registra metadados validados de uma evidência e retorna status `pending_upload`.
+        O upload real será integrado futuramente via signed upload.
+        A resposta nunca expõe `storageKey`.
+      operationId: createCaseEvidence
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCaseEvidenceRequest'
+      responses:
+        "201":
+          description: Evidência registrada com metadados autorizados
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseEvidenceCreatedResponse'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "422":
+          $ref: '#/components/responses/UnprocessableEntity'
+    get:
+      tags: [case-evidences]
+      summary: Listar evidências autorizadas de caso
+      description: Lista metadados de evidências sem expor `storageKey`, bucket ou URL privada.
+      operationId: listCaseEvidences
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
+      responses:
+        "200":
+          description: Lista de evidências autorizadas
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseEvidenceListResponse'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    CaseId:
+      in: path
+      name: caseId
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    Unauthorized:
+      description: Não autenticado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Ator sem vínculo com o caso
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Caso não encontrado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    UnprocessableEntity:
+      description: Tipo, tamanho ou metadado inválido
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    CreateCaseEvidenceRequest:
+      type: object
+      required: [fileName, mimeType, sizeBytes]
+      additionalProperties: false
+      properties:
+        fileName:
+          type: string
+          maxLength: 180
+          description: Nome original do arquivo, sem path.
+          examples: [foto-produto.jpg, contrato.pdf]
+        mimeType:
+          type: string
+          enum:
+            - image/jpeg
+            - image/png
+            - image/webp
+            - video/mp4
+            - video/quicktime
+            - audio/mpeg
+            - audio/aac
+            - application/pdf
+            - application/msword
+            - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+            - application/vnd.ms-excel
+            - application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+          description: |
+            Formatos V1 permitidos: JPEG/JPG, PNG, WEBP, MP4, MOV, MP3, AAC, PDF, DOC, DOCX, XLS e XLSX.
+        sizeBytes:
+          type: integer
+          minimum: 1
+          maximum: 20971520
+          description: Tamanho máximo V1 de 20 MB por evidência.
+        checksumSha256:
+          type: string
+          pattern: '^[a-fA-F0-9]{64}$'
+          nullable: true
+        description:
+          type: string
+          maxLength: 500
+          nullable: true
+    CaseEvidenceCreatedResponse:
+      allOf:
+        - $ref: '#/components/schemas/CaseEvidenceResponse'
+        - type: object
+          properties:
+            upload:
+              type: object
+              properties:
+                method:
+                  type: string
+                  enum: [SIGNED_UPLOAD_PENDING]
+    CaseEvidenceListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CaseEvidenceResponse'
+    CaseEvidenceResponse:
+      type: object
+      description: Payload público/autorizado. Nunca retorna `storageKey`.
+      properties:
+        id:
+          type: string
+          format: uuid
+        caseId:
+          type: string
+          format: uuid
+        uploadedByUserId:
+          type: string
+          format: uuid
+        fileName:
+          type: string
+        mimeType:
+          type: string
+        sizeBytes:
+          type: integer
+        checksumSha256:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [pending_upload, uploaded, rejected]
+        createdAt:
+          type: string
+          format: date-time
+    ErrorResponse:
+      type: object
+      properties:
+        statusCode:
+          type: integer
+        message: {}
+        error:
+          type: string
+        code:
+          type: string
