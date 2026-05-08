@@ -5,11 +5,26 @@ import { CasesService } from './cases.service';
 import { CasesRepository } from './cases.repository';
 import { CaseStateMachineService } from './state-machine/case-state-machine.service';
 import { LegalTermsModule } from '../legal-terms/legal-terms.module';
+import { CaseEvidencesController } from './evidences/case-evidences.controller';
+import { CaseEvidencesService } from './evidences/case-evidences.service';
+import { CaseEvidencesRepository } from './evidences/case-evidences.repository';
 
 @Module({
   imports: [EventEmitterModule.forRoot(), LegalTermsModule],
-  controllers: [CasesController],
-  providers: [CasesService, CasesRepository, CaseStateMachineService],
-  exports: [CasesService, CasesRepository, CaseStateMachineService],
+  controllers: [CasesController, CaseEvidencesController],
+  providers: [
+    CasesService,
+    CasesRepository,
+    CaseStateMachineService,
+    CaseEvidencesService,
+    CaseEvidencesRepository,
+  ],
+  exports: [
+    CasesService,
+    CasesRepository,
+    CaseStateMachineService,
+    CaseEvidencesService,
+    CaseEvidencesRepository,
+  ],
 })
 export class CasesModule {}
