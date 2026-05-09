@@ -1,0 +1,1168 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "TrustCheck API - Sprint 1",
+    "description": "Bundle OpenAPI consolidado para AUTH e CASOS na Sprint 01.\n\nFonte funcional: controllers NestJS implementados em `src/modules/auth` e `src/modules/cases`.\nFonte de produto: contratos Sprint 1 AUTH/CASOS.\n\nRegras de segurança/LGPD:\n- Não usar exemplos com OTP, tokens, TOTP secret, recovery codes, secrets ou dados reais.\n- Campos sensíveis são marcados com `x-sensitive: true`.\n- Payloads de auditoria e timeline devem expor somente dados autorizados e minimizados.",
+    "version": "1.1.1"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000"
+    },
+    {
+      "url": "https://api.trustcheck.com.br"
+    }
+  ],
+  "tags": [
+    {
+      "name": "auth-consumer"
+    },
+    {
+      "name": "auth-company"
+    },
+    {
+      "name": "auth-sso"
+    },
+    {
+      "name": "cases"
+    },
+    {
+      "name": "legal-audit"
+    }
+  ],
+  "paths": {
+    "/auth/consumer/register": {
+      "post": {
+        "tags": ["auth-consumer"],
+        "summary": "Inicia cadastro de consumidor",
+        "operationId": "registerConsumer",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterConsumerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Cadastro iniciado e OTP enviado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterInitResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          }
+        }
+      }
+    },
+    "/auth/consumer/register/confirm": {
+      "post": {
+        "tags": ["auth-consumer"],
+        "summary": "Confirma cadastro do consumidor com OTP",
+        "operationId": "confirmConsumerRegistration",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterConfirmRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Conta ativada e tokens emitidos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokensResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/auth/company/register": {
+      "post": {
+        "tags": ["auth-company"],
+        "summary": "Inicia cadastro empresarial",
+        "operationId": "registerCompany",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterCompanyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Cadastro iniciado e OTP enviado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterInitResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          }
+        }
+      }
+    },
+    "/auth/company/register/confirm": {
+      "post": {
+        "tags": ["auth-company"],
+        "summary": "Confirma OTP e inicia enrolamento TOTP da empresa",
+        "description": "Resposta one-shot com token temporário de escopo `totp_pending` e material de enrolamento 2FA.\nNão logar nem exemplificar `totpSecret`, `qrCodeDataUrl` ou `recoveryCodes` com valores reais.",
+        "operationId": "confirmCompanyRegistration",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterConfirmRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OTP válido e enrolamento TOTP iniciado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompanyConfirmResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/auth/company/claim": {
+      "post": {
+        "tags": ["auth-company"],
+        "summary": "Reivindica perfil empresarial por CNPJ",
+        "operationId": "claimCompanyProfile",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimCompanyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Claim registrado para análise e OTP enviado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimCreatedResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/UnprocessableEntity"
+          }
+        }
+      }
+    },
+    "/auth/company/claim/{claimId}/status": {
+      "get": {
+        "tags": ["auth-company"],
+        "summary": "Consulta status da reivindicação empresarial",
+        "operationId": "getCompanyClaimStatus",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "claimId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Status atual do claim retornado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimStatusResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/auth/sso/google": {
+      "post": {
+        "tags": ["auth-sso"],
+        "summary": "Login via Google SSO",
+        "operationId": "googleSsoLogin",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SsoRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login SSO realizado com sucesso",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokensResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/auth/sso/apple": {
+      "post": {
+        "tags": ["auth-sso"],
+        "summary": "Login via Apple SSO",
+        "operationId": "appleSsoLogin",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SsoRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login SSO realizado com sucesso",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokensResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/cases": {
+      "post": {
+        "tags": ["cases"],
+        "summary": "Cria novo caso",
+        "operationId": "createCase",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCaseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Caso criado com sucesso",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/cases/{id}": {
+      "get": {
+        "tags": ["cases"],
+        "summary": "Busca caso por ID",
+        "operationId": "getCase",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Caso retornado com sucesso",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/cases/{id}/audit": {
+      "get": {
+        "tags": ["legal-audit"],
+        "summary": "Busca timeline de auditoria de um caso",
+        "operationId": "getCaseAudit",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Timeline de auditoria retornado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditTimelineResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/cases/{id}/moderation/start": {
+      "post": {
+        "tags": ["cases"],
+        "summary": "Inicia moderação de caso",
+        "operationId": "startModeration",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Moderação iniciada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/cases/{id}/moderation/approve": {
+      "post": {
+        "tags": ["cases"],
+        "summary": "Aprova caso em moderação",
+        "operationId": "approveCase",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModerationDecisionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Caso aprovado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/cases/{id}/moderation/reject": {
+      "post": {
+        "tags": ["cases"],
+        "summary": "Rejeita caso em moderação",
+        "operationId": "rejectCase",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModerationDecisionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Caso rejeitado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/cases/{id}/notify-company": {
+      "post": {
+        "tags": ["cases"],
+        "summary": "Notifica empresa sobre caso",
+        "operationId": "notifyCompany",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Empresa notificada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/cases/{id}/company/respond": {
+      "post": {
+        "tags": ["cases"],
+        "summary": "Empresa responde ao caso",
+        "operationId": "companyRespond",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompanyResponseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Resposta registrada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/cases/{id}/resolve": {
+      "post": {
+        "tags": ["cases"],
+        "summary": "Resolve caso (requer confirmação de ambas as partes)",
+        "operationId": "resolveCase",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Caso resolvido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/cases/{id}/close-unresolved": {
+      "post": {
+        "tags": ["cases"],
+        "summary": "Fecha caso sem resolução",
+        "operationId": "closeUnresolved",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Caso fechado sem resolução",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaseResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "RegisterConsumerRequest": {
+        "type": "object",
+        "required": ["email", "password", "fullName", "lgpdAccepted", "lgpdVersion"],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "x-sensitive": true
+          },
+          "fullName": {
+            "type": "string"
+          },
+          "lgpdAccepted": {
+            "type": "boolean"
+          },
+          "lgpdVersion": {
+            "type": "string"
+          }
+        }
+      },
+      "RegisterConfirmRequest": {
+        "type": "object",
+        "required": ["registrationToken", "otp"],
+        "properties": {
+          "registrationToken": {
+            "type": "string"
+          },
+          "otp": {
+            "type": "string",
+            "x-sensitive": true
+          }
+        }
+      },
+      "RegisterCompanyRequest": {
+        "type": "object",
+        "required": ["email", "password", "cnpj", "legalName", "fullName", "lgpdAccepted", "lgpdVersion"],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "x-sensitive": true
+          },
+          "cnpj": {
+            "type": "string"
+          },
+          "legalName": {
+            "type": "string"
+          },
+          "fullName": {
+            "type": "string"
+          },
+          "lgpdAccepted": {
+            "type": "boolean"
+          },
+          "lgpdVersion": {
+            "type": "string"
+          }
+        }
+      },
+      "ClaimCompanyRequest": {
+        "type": "object",
+        "required": ["cnpj", "legalName", "email", "password", "fullName", "documents", "lgpdAccepted", "lgpdVersion"],
+        "properties": {
+          "cnpj": {
+            "type": "string"
+          },
+          "legalName": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "x-sensitive": true
+          },
+          "fullName": {
+            "type": "string"
+          },
+          "documents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Document"
+            }
+          },
+          "lgpdAccepted": {
+            "type": "boolean"
+          },
+          "lgpdVersion": {
+            "type": "string"
+          }
+        }
+      },
+      "Document": {
+        "type": "object",
+        "required": ["url", "fileName", "mimeType", "sizeBytes"],
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "fileName": {
+            "type": "string"
+          },
+          "mimeType": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "type": "integer"
+          }
+        }
+      },
+      "SsoRequest": {
+        "type": "object",
+        "required": ["idToken"],
+        "properties": {
+          "idToken": {
+            "type": "string",
+            "x-sensitive": true
+          }
+        }
+      },
+      "CreateCaseRequest": {
+        "type": "object",
+        "required": ["companyId", "experienceType", "category", "description", "occurredAt", "legalAcceptance"],
+        "properties": {
+          "companyId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "experienceType": {
+            "type": "string",
+            "enum": ["reclamacao", "denuncia", "elogio", "duvida_resolvida"]
+          },
+          "category": {
+            "type": "string",
+            "enum": ["imoveis", "servicos", "ecommerce", "financeiro", "saude", "educacao", "outro"]
+          },
+          "description": {
+            "type": "string"
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "legalAcceptance": {
+            "$ref": "#/components/schemas/LegalAcceptance"
+          }
+        }
+      },
+      "LegalAcceptance": {
+        "type": "object",
+        "required": ["termId", "contentHashEcho"],
+        "properties": {
+          "termId": {
+            "type": "string"
+          },
+          "contentHashEcho": {
+            "type": "string"
+          }
+        }
+      },
+      "ModerationDecisionRequest": {
+        "type": "object",
+        "required": ["justification"],
+        "properties": {
+          "justification": {
+            "type": "string"
+          }
+        }
+      },
+      "CompanyResponseRequest": {
+        "type": "object",
+        "required": ["response"],
+        "properties": {
+          "response": {
+            "type": "string"
+          }
+        }
+      },
+      "RegisterInitResponse": {
+        "type": "object",
+        "required": ["registrationToken"],
+        "properties": {
+          "registrationToken": {
+            "type": "string"
+          }
+        }
+      },
+      "TokensResponse": {
+        "type": "object",
+        "required": ["accessToken", "refreshToken"],
+        "properties": {
+          "accessToken": {
+            "type": "string",
+            "x-sensitive": true
+          },
+          "refreshToken": {
+            "type": "string",
+            "x-sensitive": true
+          }
+        }
+      },
+      "CompanyConfirmResponse": {
+        "type": "object",
+        "required": ["accessToken", "totpSecret", "qrCodeDataUrl", "recoveryCodes"],
+        "properties": {
+          "accessToken": {
+            "type": "string",
+            "x-sensitive": true
+          },
+          "totpSecret": {
+            "type": "string",
+            "x-sensitive": true
+          },
+          "qrCodeDataUrl": {
+            "type": "string",
+            "x-sensitive": true
+          },
+          "recoveryCodes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "x-sensitive": true
+            }
+          }
+        }
+      },
+      "ClaimCreatedResponse": {
+        "type": "object",
+        "required": ["claimId"],
+        "properties": {
+          "claimId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ClaimStatusResponse": {
+        "type": "object",
+        "required": ["claimId", "status"],
+        "properties": {
+          "claimId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["pending", "approved", "rejected"]
+          }
+        }
+      },
+      "CaseResponse": {
+        "type": "object",
+        "required": ["id", "status", "createdAt"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["draft", "pending_moderation", "published", "notified", "responded", "resolved", "closed_unresolved"]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AuditTimelineResponse": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/AuditEvent"
+        }
+      },
+      "AuditEvent": {
+        "type": "object",
+        "required": ["id", "action", "actor", "timestamp"],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Requisição inválida",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Não autorizado",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Acesso negado",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Recurso não encontrado",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "Conflito",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "UnprocessableEntity": {
+        "description": "Entidade não processável",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "Error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
