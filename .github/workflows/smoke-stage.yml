@@ -1,0 +1,66 @@
+name: Smoke Stage
+
+on:
+  push:
+    branches: [chore/tc-s2-integration-smoke]
+  pull_request:
+    branches: [main, chore/tc-s2-integration-smoke]
+
+jobs:
+  smoke-stage:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: trustcheck_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Test
+        run: npm test --if-present
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/trustcheck_test
+
+      - name: Test coverage
+        run: npm run test:coverage --if-present
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/trustcheck_test
+
+      - name: Coverage check
+        run: |
+          if [ -f coverage/coverage-summary.json ]; then
+            COVERAGE=$(node -e "console.log(require('./coverage/coverage-summary.json').total.lines.pct)")
+            if (( $(echo "$COVERAGE < 60" | bc -l) )); then
+              echo "Coverage $COVERAGE% is below 60% threshold"
+              exit 1
+            fi
+          fi
+        continue-on-error: true
+
+      - name: Run migrations
+        run: npm run migrate --if-present
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/trustcheck_test
