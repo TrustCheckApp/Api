@@ -116,4 +116,12 @@ export class CaseEvidencesRepository {
       ORDER BY created_at DESC
     `;
   }
+
+  async markUploaded(id: string): Promise<void> {
+    await this.prisma.$executeRaw`
+      UPDATE case_evidences
+      SET status = 'uploaded'
+      WHERE id = ${id}::uuid
+    `;
+  }
 }

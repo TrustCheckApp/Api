@@ -9,6 +9,10 @@ import {
 
 export class CreateCaseEvidenceDto {
   @IsString()
+  @MaxLength(600)
+  uploadToken: string;
+
+  @IsString()
   @MaxLength(180)
   @Matches(/^[^\\/<>:"|?*\u0000-\u001F]+$/, {
     message: 'Nome de arquivo inválido.',
