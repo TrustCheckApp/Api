@@ -14,6 +14,7 @@ import { ConsumerAuthService } from './consumer-auth.service';
 import {
   RegisterConsumerDto,
   RegisterConfirmDto,
+  ConsumerLoginDto,
   SsoAuthDto,
 } from './dto/register-consumer.dto';
 import { SsoProvider } from '@prisma/client';
@@ -45,6 +46,17 @@ export class ConsumerAuthController {
   async confirm(@Body() dto: RegisterConfirmDto, @Req() req: Request) {
     const meta = this._extractMeta(req);
     return this.authService.confirm(dto, meta);
+  }
+
+  @Post('consumer/login')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Login do consumidor com e-mail e senha (M04)' })
+  @ApiBody({ type: ConsumerLoginDto })
+  @ApiResponse({ status: 200, description: 'Autenticado com sucesso â€” tokens emitidos' })
+  @ApiResponse({ status: 401, description: 'Credenciais invÃ¡lidas ou conta inativa' })
+  async login(@Body() dto: ConsumerLoginDto, @Req() req: Request) {
+    const meta = this._extractMeta(req);
+    return this.authService.loginWithPassword(dto.email, dto.password, meta);
   }
 
   @Post('sso/google')

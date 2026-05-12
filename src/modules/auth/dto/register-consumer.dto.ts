@@ -59,3 +59,13 @@ export class SsoAuthDto {
   @IsNotEmpty({ message: 'lgpdVersion é obrigatório' })
   lgpdVersion: string;
 }
+
+export class ConsumerLoginDto {
+  @IsEmail({}, { message: 'E-mail invÃ¡lido' })
+  @Transform(({ value }) => (value as string).toLowerCase().trim())
+  email: string;
+
+  @IsString()
+  @IsNotEmpty({ message: 'Senha Ã© obrigatÃ³ria' })
+  password: string;
+}

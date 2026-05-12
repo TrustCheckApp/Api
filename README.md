@@ -91,6 +91,7 @@ Os contratos devem refletir somente endpoints implementados ou explicitamente ma
 
 - `POST /auth/consumer/register`
 - `POST /auth/consumer/register/confirm`
+- `POST /auth/consumer/login`
 - `POST /auth/company/register`
 - `POST /auth/company/register/confirm`
 - `POST /auth/company/claim`

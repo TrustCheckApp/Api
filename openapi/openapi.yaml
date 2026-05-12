@@ -64,6 +64,25 @@ paths:
                 $ref: '#/components/schemas/TokensResponse'
         "400": { $ref: '#/components/responses/BadRequest' }
         "401": { $ref: '#/components/responses/Unauthorized' }
+  /auth/consumer/login:
+    post:
+      tags: [auth-consumer]
+      summary: Login do consumidor com e-mail e senha
+      operationId: loginConsumer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsumerLoginRequest'
+      responses:
+        "200":
+          description: Login efetuado e tokens emitidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokensResponse'
+        "401": { $ref: '#/components/responses/Unauthorized' }
   /auth/company/register:
     post:
       tags: [auth-company]
@@ -426,6 +445,16 @@ components:
     RegisterConfirmRequest:
       type: object
       required: [registrationToken, otp]
+    ConsumerLoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 1
+      required: [email, password]
       properties:
         registrationToken: { type: string, writeOnly: true, x-sensitive: true }
         otp: { type: string, pattern: '^\\d{6}$', writeOnly: true, x-sensitive: true }
