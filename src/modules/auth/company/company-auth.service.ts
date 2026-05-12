@@ -31,6 +31,7 @@ type CompanyRegistrationTokenPayload = {
 };
 
 type RequestMeta = { ip?: string; userAgent?: string };
+type CompanyLoginMethod = 'password_totp' | 'password_recovery';
 
 type ClaimReviewResponse = {
   claimId: string;
@@ -213,19 +214,7 @@ export class CompanyAuthService {
       { expiresIn: '30m', secret: this.config.get<string>('JWT_SECRET') },
     );
 
-    try {
-      await this.auditService.log({
-        actorUserId: updatedUser.id,
-        action: AuditAction.AUTH_LOGIN,
-        entity: 'user',
-        entityId: updatedUser.id,
-        payload: { method: 'password_totp', role: updatedUser.role, totpEnrollment: 'started' },
-        ip: meta?.ip,
-        userAgent: meta?.userAgent,
-      });
-    } catch (err) {
-      this.logger.error('Falha ao gravar AUTH_LOGIN em audit_log — trilha comprometida', String(err));
-    }
+    await this.auditLoginSuccess(updatedUser.id, updatedUser.role, 'password_totp', meta);
 
     return {
       accessToken: tempToken,
@@ -470,4 +459,30 @@ export class CompanyAuthService {
       rejectionReason: claim.rejectionReason,
     };
   }
+
+  async auditLoginSuccess(
+    userId: string,
+    role: UserRole,
+    method: CompanyLoginMethod,
+    meta?: RequestMeta,
+  ): Promise<void> {
+    try {
+      await this.auditService.log({
+        actorUserId: userId,
+        action: AuditAction.AUTH_LOGIN,
+        entity: 'user',
+        entityId: userId,
+        payload: {
+          method,
+          role,
+          ...(method === 'password_totp' ? { totpEnrollment: 'started' } : {}),
+        },
+        ip: meta?.ip,
+        userAgent: meta?.userAgent,
+      });
+    } catch (err) {
+      this.logger.error('Falha ao gravar AUTH_LOGIN em audit_log — trilha comprometida', String(err));
+    }
+  }
 }
+

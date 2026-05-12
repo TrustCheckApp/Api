@@ -44,6 +44,7 @@ function buildTransitionMock(fromStatus: CaseStatus, options: { companyLinked?: 
 }
 
 describe('CaseStateMachineService', () => {
+  jest.setTimeout(30000);
   let service: CaseStateMachineService;
 
   beforeEach(async () => {

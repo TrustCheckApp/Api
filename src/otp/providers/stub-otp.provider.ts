@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { OtpProvider, EnvioOtpParams } from './otp-provider.interface';
+import { OtpProvider, EnvioOtpParams } from '../otp-provider.interface';
 
 /**
  * Stub local — usa apenas console.log.

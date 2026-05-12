@@ -2,7 +2,6 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import { CasesService } from './cases.service';
 import { CasesRepository } from './cases.repository';
-import { LegalTermsService } from '../legal-terms/legal-terms.service';
 import { CaseCategory, ExperienceType, CaseStatus } from '@prisma/client';
 import { OpenCaseDto } from './dto/open-case.dto';
 
@@ -12,7 +11,7 @@ const PAST_DATE = '2026-01-15';
 const LONG_DESC = 'A'.repeat(50);
 
 const mockRepo = {
-  createDraft: jest.fn(),
+  createDraftWithLegalAcceptance: jest.fn(),
   companyExists: jest.fn(),
   findById: jest.fn(),
   findByPublicId: jest.fn(),
@@ -28,7 +27,6 @@ describe('CasesService', () => {
       providers: [
         CasesService,
         { provide: CasesRepository, useValue: mockRepo },
-        { provide: LegalTermsService, useValue: { validateAndCreateAcceptance: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -40,7 +38,7 @@ describe('CasesService', () => {
 
   it('cria caso válido e retorna publicId', async () => {
     mockRepo.companyExists.mockResolvedValue(true);
-    mockRepo.createDraft.mockResolvedValue({
+    mockRepo.createDraftWithLegalAcceptance.mockResolvedValue({
       id: 'abc-123',
       publicId: 'TC-2026-000001',
       status: CaseStatus.ENVIADO,
@@ -59,10 +57,14 @@ describe('CasesService', () => {
 
     expect(result.publicId).toBe('TC-2026-000001');
     expect(result.status).toBe(CaseStatus.ENVIADO);
-    expect(mockRepo.createDraft).toHaveBeenCalledWith(
+    expect(mockRepo.createDraftWithLegalAcceptance).toHaveBeenCalledWith(
       expect.objectContaining({
         consumerUserId: CONSUMER_ID,
         companyId: VALID_COMPANY_ID,
+      }),
+      expect.objectContaining({
+        userId: CONSUMER_ID,
+        termId: 'term-uuid-1',
       }),
     );
   });

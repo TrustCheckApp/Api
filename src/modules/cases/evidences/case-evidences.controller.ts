@@ -17,6 +17,7 @@ import { JwtGuard } from '../../../auth/guards/auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
 import { CreateCaseEvidenceDto } from './dto/create-case-evidence.dto';
+import { RequestCaseEvidenceUploadDto } from './dto/request-case-evidence-upload.dto';
 import { CaseEvidencesService } from './case-evidences.service';
 
 type AuthRequest = Request & { user?: { id: string; role: string } };
@@ -43,6 +44,18 @@ export class CaseEvidencesController {
     @Req() req: AuthRequest,
   ) {
     return this.service.create(caseId, { id: req.user?.id ?? '', role: req.user?.role ?? '' }, dto);
+  }
+
+  @Post('upload-url')
+  @HttpCode(HttpStatus.CREATED)
+  @Roles('consumer', 'company')
+  @ApiOperation({ summary: 'Solicitar URL assinada S3 para upload de evidencia' })
+  async requestUpload(
+    @Param('caseId') caseId: string,
+    @Body() dto: RequestCaseEvidenceUploadDto,
+    @Req() req: AuthRequest,
+  ) {
+    return this.service.requestUpload(caseId, { id: req.user?.id ?? '', role: req.user?.role ?? '' }, dto);
   }
 
   @Get()

@@ -26,6 +26,7 @@ import { PublishTermDto } from './dto/legal-terms.dto';
 import { TermKind } from '@prisma/client';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { JwtGuard } from '../../auth/guards/auth.guard';
 
 type AuthRequest = Request & { user?: { id: string; role: string } };
 
@@ -38,7 +39,7 @@ export class LegalTermsController {
   @Post('admin/legal-terms')
   @HttpCode(HttpStatus.CREATED)
   @ApiBearerAuth()
-  @UseGuards(RolesGuard)
+  @UseGuards(JwtGuard, RolesGuard)
   @Roles('admin')
   @ApiOperation({ summary: 'Publicar novo termo legal (admin)' })
   @ApiResponse({ status: 201, description: 'Termo publicado e versão anterior desativada' })
@@ -60,7 +61,7 @@ export class LegalTermsController {
   @Get('admin/legal-terms/:version/acceptances')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth()
-  @UseGuards(RolesGuard)
+  @UseGuards(JwtGuard, RolesGuard)
   @Roles('admin')
   @ApiOperation({ summary: 'Listar aceites por versão do termo (admin, paginado)' })
   @ApiParam({ name: 'version', description: 'Versão semântica do termo (ex: 1.0.0)' })
