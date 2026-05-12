@@ -15,7 +15,7 @@ import {
   IsUrl,
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
-import { isValidCnpj, normalizeCnpj } from '../utils/cnpj.util';
+import { isValidCnpj, normalizeCnpj } from '../../utils/cnpj.util';
 import { registerDecorator, ValidationOptions } from 'class-validator';
 
 function IsCnpjValid(options?: ValidationOptions) {
