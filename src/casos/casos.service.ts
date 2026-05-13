@@ -4,7 +4,7 @@ import {
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
-import { StatusCaso, Perfil } from '@prisma/client';
+import { Prisma, StatusCaso, Perfil } from '@prisma/client';
 import { v4 as uuid } from 'uuid';
 import dayjs from 'dayjs';
 import { PrismaService } from '../prisma/prisma.service';
@@ -129,7 +129,7 @@ export class CasosService {
 
     await this.prisma.$transaction([
       this.prisma.questionarioCaso.create({
-        data: { casoId: caso.id, respostas: dto.respostas },
+        data: { casoId: caso.id, respostas: dto.respostas as Prisma.InputJsonObject },
       }),
       this.prisma.termoAceite.create({
         data: {

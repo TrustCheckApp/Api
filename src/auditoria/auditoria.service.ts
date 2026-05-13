@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { TipoAuditoria } from '@prisma/client';
+import { Prisma, TipoAuditoria } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 interface RegistrarAuditoriaDto {
@@ -19,7 +19,7 @@ export class AuditoriaService {
       data: {
         usuarioId: dados.usuarioId ?? null,
         tipo: dados.tipo,
-        detalhe: dados.detalhe ?? null,
+        detalhe: dados.detalhe ? (dados.detalhe as Prisma.InputJsonObject) : Prisma.JsonNull,
         ip: dados.ip ?? null,
         userAgent: dados.userAgent ?? null,
       },

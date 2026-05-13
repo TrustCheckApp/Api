@@ -20,7 +20,7 @@ const MOCK_USER = {
 const mockAuditLog = jest.fn().mockResolvedValue(undefined);
 const mockEventPublish = jest.fn().mockResolvedValue(undefined);
 const mockJwtSign = jest.fn().mockResolvedValue('access.token.mock');
-const mockJwtVerify = jest.fn().mockResolvedValue({ sub: MOCK_USER.id, scope: 'otp_pending' });
+const mockJwtVerify = jest.fn().mockResolvedValue({ sub: MOCK_USER.id, scope: 'otp_pending', role: UserRole.consumer });
 const mockOtpVerify = jest.fn().mockResolvedValue(undefined);
 const mockPrismaUserUpdate = jest.fn().mockResolvedValue(MOCK_USER);
 
@@ -38,6 +38,9 @@ describe('ConsumerAuthService — audit de login', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    mockJwtVerify.mockResolvedValue({ sub: MOCK_USER.id, scope: 'otp_pending', role: UserRole.consumer });
+    mockPrisma.user.findUnique.mockResolvedValue(MOCK_USER);
+    mockPrismaUserUpdate.mockResolvedValue(MOCK_USER);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [

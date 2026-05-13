@@ -20,6 +20,7 @@
     "test:cov": "jest --coverage",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "test:e2e:p0": "jest --config ./test/jest-e2e.json --runInBand test/auth/consumer-register.e2e-spec.ts test/auth/company-register.e2e-spec.ts test/auth/company-claim.e2e-spec.ts test/cases/open-case.e2e-spec.ts test/cases/state-machine.e2e-spec.ts test/legal-terms/term-acceptance.e2e-spec.ts",
+    "test:e2e:weekly": "jest --config ./test/jest-e2e.json --runInBand test/e2e-weekly/weekly-suite.e2e-spec.ts test/auth/consumer-register.e2e-spec.ts test/auth/consumer-login-audit.e2e-spec.ts test/auth/company-claim.e2e-spec.ts test/cases/open-case.e2e-spec.ts test/cases/state-machine.e2e-spec.ts test/legal-terms/term-acceptance.e2e-spec.ts",
     "test:e2e:consumer": "jest --config ./test/jest-e2e.json --testPathPattern=consumer-register",
     "openapi:check": "openapi-ts -i openapi/openapi.yaml -o /tmp/trustcheck-openapi-check",
     "validate:ci": "npm run prisma:generate && npm run build && npm run lint:check && npm run test && npm run openapi:check",
