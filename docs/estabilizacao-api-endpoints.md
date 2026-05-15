@@ -2,9 +2,9 @@
 
 ## Contexto
 
-Esta documentação registra a primeira etapa da estabilização da API com abordagem TDD.
+Esta documentação registra a estabilização incremental da API com abordagem TDD.
 
-A composição canônica da aplicação passa a ser `src/modules/*`, mantendo os diretórios legados apenas como compatibilidade temporária enquanto não houver plano específico de remoção física.
+A composição canônica da aplicação é `src/modules/*`, mantendo os diretórios legados apenas como compatibilidade temporária enquanto não houver plano específico de remoção física.
 
 ## Decisão arquitetural
 
@@ -19,7 +19,7 @@ A composição canônica da aplicação passa a ser `src/modules/*`, mantendo os
 
 ### Estrutura depreciada
 
-Os módulos abaixo deixam de ser importados por `src/app.module.ts`:
+Os módulos abaixo não devem ser importados por `src/app.module.ts`:
 
 - `src/auth/auth.module.ts`
 - `src/casos/casos.module.ts`
@@ -41,19 +41,19 @@ Inventário extraído dos controllers atualmente registrados pela composição c
 | POST | `/auth/sso/apple` | `ConsumerAuthController` | Pública | `POST /auth/sso/apple` | Implementado |
 | POST | `/auth/company/register` | `CompanyAuthController` | Pública | `POST /auth/company/register` | Implementado |
 | POST | `/auth/company/register/confirm` | `CompanyAuthController` | Pública | `POST /auth/company/register/confirm` | Implementado |
-| POST | `/auth/company/claim` | `CompanyAuthController` | Pública no código atual | `POST /auth/company/claim` | Implementado com atenção de autorização |
+| POST | `/auth/company/claim` | `CompanyAuthController` | JWT + `company` | `POST /auth/company/claim` | Ajustado nesta etapa |
 | GET | `/auth/company/claim/:claimId/status` | `CompanyAuthController` | JWT | `GET /auth/company/claim/{claimId}/status` | Implementado |
 | POST | `/auth/company/claim/:claimId/approve` | `CompanyAuthController` | JWT + `admin` | Admin recomendado | Implementado |
 | POST | `/auth/company/claim/:claimId/reject` | `CompanyAuthController` | JWT + `admin` | Admin recomendado | Implementado |
 | POST | `/cases` | `CasesController` | JWT + `consumer` | `POST /cases` | Implementado |
-| GET | `/cases/:id` | `CasesController` | Pública no código atual | `GET /cases/{id}` | Implementado com atenção de exposição |
+| GET | `/cases/:id` | `CasesController` | JWT + `admin`, `consumer` ou `company` | `GET /cases/{id}` | Ajustado nesta etapa |
 | GET | `/cases/:id/audit` | `CasesController` | JWT + `admin` ou `consumer` | `GET /cases/{id}/audit` | Implementado |
 | POST | `/cases/:id/moderation/start` | `CasesController` | JWT + `admin` | `POST /cases/{id}/moderation/start` | Implementado |
 | POST | `/cases/:id/moderation/approve` | `CasesController` | JWT + `admin` | `POST /cases/{id}/moderation/approve` | Implementado |
 | POST | `/cases/:id/moderation/reject` | `CasesController` | JWT + `admin` | `POST /cases/{id}/moderation/reject` | Implementado |
 | POST | `/cases/:id/notify-company` | `CasesController` | Internal HMAC | `POST /cases/{id}/notify-company` | Implementado |
 | POST | `/cases/:id/company/respond` | `CasesController` | JWT + `company` | `POST /cases/{id}/company/respond` | Implementado |
-| POST | `/cases/:id/resolve` | `CasesController` | JWT + `admin` | `POST /cases/{id}/resolve` | Implementado com divergência de regra V1 |
+| POST | `/cases/:id/resolve` | `CasesController` | JWT + `admin`, `consumer` ou `company`, com dupla confirmação | `POST /cases/{id}/resolve` | Ajustado nesta etapa |
 | POST | `/cases/:id/close-unresolved` | `CasesController` | JWT + `admin` ou `consumer` | `POST /cases/{id}/close-unresolved` | Implementado |
 | POST | `/cases/:caseId/evidences` | `CaseEvidencesController` | JWT + `consumer` ou `company` | `POST /cases/{id}/evidences` | Implementado |
 | POST | `/cases/:caseId/evidences/upload-url` | `CaseEvidencesController` | JWT + `consumer` ou `company` | Recomendado em MIDIA | Implementado |
@@ -62,12 +62,28 @@ Inventário extraído dos controllers atualmente registrados pela composição c
 | GET | `/legal-terms/active` | `LegalTermsController` | Pública | Recomendado | Implementado |
 | GET | `/admin/legal-terms/:version/acceptances` | `LegalTermsController` | JWT + `admin` | Admin/legal recomendado | Implementado |
 
-## Divergências e riscos conhecidos
+## Regras de autorização fechadas nesta etapa
 
-1. `POST /auth/company/claim` está público no controller canônico. A referência de Sprint 1 exige status autenticado, mas o claim em si pode exigir autenticação conforme decisão de produto. Recomenda-se fechar regra em teste antes de alterar comportamento.
-2. `GET /cases/:id` está público no código atual. Isso pode ser aceitável apenas se retornar dados estritamente públicos e minimizados; caso contrário, deve exigir autorização.
-3. `POST /cases/:id/resolve` está restrito a `admin`, enquanto a regra V1 indica resolução com confirmação de consumidor e empresa. A implementação atual exige flags de confirmação, mas o endpoint não está aberto aos dois perfis.
-4. Os diretórios legados permanecem no repositório por segurança, mas não são mais parte da composição canônica da aplicação.
+### `POST /auth/company/claim`
+
+- Exige JWT.
+- Exige perfil `company`.
+- Retorna `401` para chamada não autenticada.
+- Retorna `403` para perfil diferente de empresa.
+- Mantém payload mínimo e sem exposição de OTP, tokens ou documentos sensíveis.
+
+### `GET /cases/:id`
+
+- Passa a exigir JWT.
+- Aceita perfis `admin`, `consumer` e `company`.
+- Mantém retorno pelo service atual, mas a evolução recomendada é criar policy de vínculo ao caso para diferenciar consumidor dono, empresa vinculada e admin.
+- A consulta pública anônima de caso publicado foi bloqueada nesta etapa por segurança, até haver policy explícita de payload público minimizado.
+
+### `POST /cases/:id/resolve`
+
+- Passa a aceitar `admin`, `consumer` e `company`.
+- Mantém a regra de dupla confirmação: `consumerConfirmed` e `companyConfirmed` devem ser verdadeiros.
+- Sem dupla confirmação, retorna conflito com `CASE_RESOLUTION_CONFIRMATION_REQUIRED`.
 
 ## Testes adicionados
 
@@ -76,16 +92,29 @@ Inventário extraído dos controllers atualmente registrados pela composição c
   - Garante que módulos legados não são importados pela composição principal.
   - Garante presença de guards e roles em endpoints sensíveis de casos e evidências.
 
+- `test/architecture/sensitive-endpoints-authorization.spec.ts`
+  - Garante autenticação e perfil `company` em `POST /auth/company/claim`.
+  - Garante autenticação e perfis autorizados em `GET /cases/:id`.
+  - Garante autenticação, perfis autorizados e dupla confirmação em `POST /cases/:id/resolve`.
+
+## Divergências e riscos conhecidos
+
+1. `GET /cases/:id` agora exige autenticação. Caso o produto precise de página pública de caso publicado, deve ser criada rota separada ou policy explícita para payload público minimizado.
+2. `POST /auth/company/claim` exige usuário `company`, mas o service ainda cria um novo usuário a partir do payload. A próxima etapa deve alinhar o fluxo funcional de claim autenticado para reutilizar o usuário autenticado ou separar `claim público` de `claim autenticado`.
+3. A autorização por vínculo ao caso ainda precisa evoluir. Hoje os perfis permitidos são controlados por role; a checagem fina por dono/empresa vinculada deve ser implementada em policy dedicada.
+4. Os diretórios legados permanecem no repositório por segurança, mas não são mais parte da composição canônica da aplicação.
+
 ## Validação recomendada
 
 ```bash
 npm run validate:ci
 npm run test:e2e:p0
+npm test -- test/architecture/canonical-modules.spec.ts test/architecture/sensitive-endpoints-authorization.spec.ts
 ```
 
 ## Próximas tarefas recomendadas
 
-1. Criar testes E2E específicos para autorização de `GET /cases/:id`, `POST /auth/company/claim` e `POST /cases/:id/resolve`.
-2. Decidir regra final de exposição pública de casos.
-3. Migrar imports internos remanescentes que ainda dependem de guards/DTOs legados.
+1. Criar policy de acesso a caso: admin, consumidor dono e empresa vinculada.
+2. Alinhar funcionalmente o fluxo de `POST /auth/company/claim` autenticado para não criar usuário duplicado.
+3. Criar rota pública separada para caso publicado, se o produto exigir exposição pública.
 4. Remover fisicamente diretórios legados somente após cobertura de testes e validação CI.
