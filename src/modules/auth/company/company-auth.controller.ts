@@ -60,11 +60,16 @@ export class CompanyAuthController {
 
   @Post('claim')
   @HttpCode(HttpStatus.ACCEPTED)
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('company')
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Reivindicação de perfil empresarial por CNPJ (E02 — HU-AUTH-08)' })
   @ApiResponse({ status: 202, description: 'Claim registrado para análise — OTP enviado' })
+  @ApiResponse({ status: 401, description: 'Não autenticado' })
+  @ApiResponse({ status: 403, description: 'Somente perfil empresa pode reivindicar empresa' })
   @ApiResponse({ status: 409, description: 'E-mail já cadastrado' })
   @ApiResponse({ status: 422, description: 'CNPJ inválido, LGPD não aceita ou sem documentos' })
-  async claim(@Body() dto: ClaimCompanyDto, @Req() req: Request) {
+  async claim(@Body() dto: ClaimCompanyDto, @Req() req: AuthRequest) {
     const { ip, userAgent } = this.extractMeta(req);
     return this.companyAuthService.claim(dto, ip, userAgent);
   }
