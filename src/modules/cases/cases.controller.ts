@@ -64,9 +64,14 @@ export class CasesController {
 
   @Get(':id')
   @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('admin', 'consumer', 'company')
   @ApiOperation({ summary: 'Consultar caso por UUID interno ou public_id (TC-YYYY-NNNNNN)' })
   @ApiParam({ name: 'id', description: 'UUID interno ou public_id no formato TC-YYYY-NNNNNN' })
-  @ApiResponse({ status: 200, description: 'Dados públicos do caso' })
+  @ApiResponse({ status: 200, description: 'Dados públicos/minimizados do caso para perfil autorizado' })
+  @ApiResponse({ status: 401, description: 'Não autenticado' })
+  @ApiResponse({ status: 403, description: 'Perfil sem autorização para consultar o caso' })
   @ApiResponse({ status: 404, description: 'Caso não encontrado (CASE_NOT_FOUND)' })
   async getCase(@Param('id') id: string) {
     return this.casesService.getCase(id);
@@ -165,7 +170,7 @@ export class CasesController {
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth()
   @UseGuards(JwtGuard, RolesGuard)
-  @Roles('admin')
+  @Roles('admin', 'consumer', 'company')
   async resolve(@Param('id') id: string, @Body() dto: ResolveCaseDto, @Req() req: AuthRequest) {
     if (!dto.consumerConfirmed || !dto.companyConfirmed) {
       throw new ConflictException({
